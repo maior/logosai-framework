@@ -1,0 +1,116 @@
+{
+  "version": "0.1.0",
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file": null,
+    "rotation": {
+      "when": "midnight",
+      "interval": 1,
+      "backup_count": 7
+    },
+    "console": true,
+    "file_logging": false
+  },
+  "paths": {
+    "config": "config",
+    "cache": "cache",
+    "data": "data",
+    "logs": "logs",
+    "agents": "agents",
+    "examples": "examples",
+    "templates": "templates"
+  },
+  "api": {
+    "timeout": 30,
+    "max_retries": 3,
+    "retry_delay": 1,
+    "backoff_factor": 2,
+    "rate_limit": {
+      "enabled": true,
+      "max_requests": 60,
+      "time_window": 60
+    },
+    "default_headers": {
+      "User-Agent": "LogosAI/0.1.0"
+    },
+    "verify_ssl": true
+  },
+  "llm": {
+    "default_provider": "openai",
+    "default_model": "gpt-4-turbo",
+    "default_settings": {
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "max_tokens": 2000,
+      "streaming": true,
+      "timeout": 60
+    },
+    "providers": {
+      "openai": {
+        "api_key_env": "OPENAI_API_KEY",
+        "organization_env": "OPENAI_ORGANIZATION",
+        "default_model": "gpt-4-turbo",
+        "fallback_model": "gpt-3.5-turbo"
+      },
+      "anthropic": {
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "default_model": "claude-3-sonnet-20240229",
+        "fallback_model": "claude-3-haiku-20240307"
+      },
+      "custom": {
+        "api_key_env": "CUSTOM_LLM_API_KEY",
+        "api_base_env": "CUSTOM_LLM_API_BASE",
+        "default_model": ""
+      }
+    }
+  },
+  "memory": {
+    "enabled": true,
+    "type": "buffer",
+    "max_size": 100,
+    "ttl": 3600,
+    "persistence": {
+      "enabled": false,
+      "type": "file",
+      "path": "data/memory"
+    }
+  },
+  "features": {
+    "message_bus": {
+      "enabled": true,
+      "auto_start": true
+    },
+    "adapters": {
+      "enabled": true,
+      "enable_legacy": true
+    },
+    "agents": {
+      "enable_task_classifier": true,
+      "enable_llm_search": true,
+      "enable_internet_search": true,
+      "enable_rag_search": true
+    },
+    "plugins": {
+      "enabled": false,
+      "auto_discover": true,
+      "load_path": "plugins"
+    },
+    "security": {
+      "enable_api_key_validation": true,
+      "enable_request_verification": true,
+      "enable_response_validation": true
+    },
+    "monitoring": {
+      "enabled": false,
+      "metrics": true,
+      "tracing": false
+    },
+    "experimental": {
+      "enabled": false,
+      "advanced_routing": false,
+      "model_switching": false,
+      "auto_scaling": false
+    }
+  }
+} 

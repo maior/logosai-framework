@@ -1,0 +1,54 @@
+{
+    "edges": [
+        {"from": "START", "to": "classifier"},
+        {"from": "classifier", "to": "llm_search"},
+        {"from": "classifier", "to": "internet_search"},
+        {"from": "classifier", "to": "rag_search"},
+        {"from": "classifier", "to": "shopping"},
+        {"from": "classifier", "to": "analyze"},
+        {"from": "classifier", "to": "error"},
+        {"from": "llm_search", "to": "success"},
+        {"from": "internet_search", "to": "success"},
+        {"from": "rag_search", "to": "success"},
+        {"from": "shopping", "to": "success"},
+        {"from": "analyze", "to": "success"},
+        {"from": "success", "to": "END"},
+        {"from": "error", "to": "END"}
+    ],
+    "routing_rules": {
+        "START": {
+            "target": "classifier"
+        },
+        "classifier": {
+            "conditions": {
+                "llm_search": "llm_search",
+                "internet_search": "internet_search",
+                "rag_search": "rag_search",
+                "shopping": "shopping",
+                "analyze": "analyze"
+            },
+            "default": "llm_search"
+        },
+        "llm_search": {
+            "target": "success"
+        },
+        "internet_search": {
+            "target": "success"
+        },
+        "rag_search": {
+            "target": "success"
+        },
+        "shopping": {
+            "target": "success"
+        },
+        "analyze": {
+            "target": "success"
+        },
+        "success": {
+            "target": "END"
+        },
+        "error": {
+            "target": "END"
+        }
+    }
+} 

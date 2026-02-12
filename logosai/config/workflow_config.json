@@ -1,0 +1,32 @@
+{
+    "workflow": {
+        "name": "LogosAI 기본 워크플로우",
+        "version": "1.0.0",
+        "description": "LogosAI SDK의 기본 워크플로우 구성",
+        "entry_node": "START",
+        "end_nodes": ["END", "error"],
+        "settings": {
+            "max_retries": 3,
+            "retry_delay_seconds": 1,
+            "max_execution_time_seconds": 60,
+            "timeout_seconds": 30
+        }
+    },
+    "message_bus": {
+        "enabled": true,
+        "topics": {
+            "workflow_start": "workflow.start",
+            "workflow_end": "workflow.end",
+            "workflow_error": "workflow.error",
+            "node_entry": "node.entry",
+            "node_exit": "node.exit",
+            "edge_traversal": "edge.traversal"
+        }
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "file": "logs/workflow.log",
+        "console": true
+    }
+} 

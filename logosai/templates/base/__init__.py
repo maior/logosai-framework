@@ -1,0 +1,1 @@
+"""Base templates for LogosAI agents"""

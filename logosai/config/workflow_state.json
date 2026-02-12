@@ -1,0 +1,23 @@
+{
+    "state": {
+        "initial": {
+            "query": "",
+            "task_type": "",
+            "current_agent": "",
+            "history": [],
+            "results": {},
+            "error_info": null
+        },
+        "validations": {
+            "required_fields": ["query", "task_type", "current_agent"],
+            "field_types": {
+                "query": "string",
+                "task_type": "string",
+                "current_agent": "string",
+                "history": "array",
+                "results": "object",
+                "error_info": "string|null"
+            }
+        }
+    }
+} 

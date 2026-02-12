@@ -1,0 +1,119 @@
+{
+  "types": {
+    "TEXT": {
+      "id": "text",
+      "description": "일반 텍스트 응답",
+      "format": {
+        "result": "string or dict"
+      }
+    },
+    "RAG_SEARCH": {
+      "id": "rag_search",
+      "description": "RAG 검색 결과 응답",
+      "format": {
+        "answer": "string",
+        "sources": "list",
+        "confidence": "float",
+        "context": "list"
+      }
+    },
+    "LLM_SEARCH": {
+      "id": "llm_search",
+      "description": "LLM 검색 결과 응답",
+      "format": {
+        "answer": "string",
+        "source": "string",
+        "reasoning": "string",
+        "key_points": "list",
+        "confidence": "float",
+        "knowledge_boundary": "string"
+      }
+    },
+    "INTERNET_SEARCH": {
+      "id": "internet_search",
+      "description": "인터넷 검색 결과 응답",
+      "format": {
+        "results": "list",
+        "query": "string",
+        "total_results": "int",
+        "search_time": "float"
+      }
+    },
+    "SHOPPING": {
+      "id": "shopping",
+      "description": "쇼핑 검색 결과 응답",
+      "format": {
+        "products": "list",
+        "query": "string",
+        "total_products": "int",
+        "price_range": "dict"
+      }
+    },
+    "ANALYSIS": {
+      "id": "analysis",
+      "description": "데이터 분석 결과 응답",
+      "format": {
+        "results": "dict",
+        "summary": "string",
+        "charts": "list",
+        "insights": "list"
+      }
+    },
+    "ERROR": {
+      "id": "error",
+      "description": "오류 응답",
+      "format": {
+        "error": "string",
+        "error_code": "int or string",
+        "details": "dict"
+      }
+    },
+    "SUCCESS": {
+      "id": "success",
+      "description": "성공 응답",
+      "format": {
+        "success": "boolean",
+        "message": "string",
+        "data": "any"
+      }
+    },
+    "PARTIAL": {
+      "id": "partial",
+      "description": "부분 성공 응답",
+      "format": {
+        "success": "boolean",
+        "message": "string",
+        "partial_data": "any",
+        "remaining": "any"
+      }
+    },
+    "NONE": {
+      "id": "none",
+      "description": "응답 없음",
+      "format": {}
+    }
+  },
+  "default": "TEXT",
+  "mapping": {
+    "STRING": "TEXT",
+    "PLAIN_TEXT": "TEXT",
+    "HTML": "TEXT",
+    "JSON": "TEXT",
+    "RAG": "RAG_SEARCH",
+    "LLM": "LLM_SEARCH",
+    "WEB": "INTERNET_SEARCH",
+    "SEARCH": "INTERNET_SEARCH",
+    "PRODUCT": "SHOPPING",
+    "SHOP": "SHOPPING",
+    "ANALYTICS": "ANALYSIS",
+    "DATA": "ANALYSIS",
+    "FAIL": "ERROR",
+    "EXCEPTION": "ERROR",
+    "OK": "SUCCESS",
+    "DONE": "SUCCESS",
+    "INCOMPLETE": "PARTIAL",
+    "IN_PROGRESS": "PARTIAL",
+    "EMPTY": "NONE",
+    "NULL": "NONE"
+  }
+} 

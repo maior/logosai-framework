@@ -1,0 +1,141 @@
+{
+  "default": {
+    "name": "기본 에이전트",
+    "description": "기본 LogosAI 에이전트",
+    "type": "unknown",
+    "version": "1.0.0",
+    "properties": {
+      "timeout": 30,
+      "max_retries": 3,
+      "async_mode": true,
+      "debug": false
+    }
+  },
+  "templates": {
+    "llm_search": {
+      "name": "LLM 검색 에이전트",
+      "description": "LLM 기반 검색 기능을 제공하는 에이전트",
+      "type": "llm_search",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 60,
+        "max_retries": 2,
+        "async_mode": true,
+        "debug": false,
+        "llm_settings": {
+          "model": "gpt-4-turbo",
+          "temperature": 0.7,
+          "top_p": 0.95,
+          "max_tokens": 2000
+        }
+      }
+    },
+    "internet_search": {
+      "name": "인터넷 검색 에이전트",
+      "description": "인터넷 검색 기능을 제공하는 에이전트",
+      "type": "internet_search",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 30,
+        "max_retries": 3,
+        "async_mode": true,
+        "debug": false,
+        "search_settings": {
+          "search_engine": "google",
+          "result_count": 10,
+          "safe_search": true
+        }
+      }
+    },
+    "rag_search": {
+      "name": "RAG 검색 에이전트",
+      "description": "RAG 기반 검색 기능을 제공하는 에이전트",
+      "type": "rag_search",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 45,
+        "max_retries": 2,
+        "async_mode": true,
+        "debug": false,
+        "rag_settings": {
+          "embedding_model": "all-mpnet-base-v2",
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "similarity_top_k": 5
+        },
+        "llm_settings": {
+          "model": "gpt-4-turbo",
+          "temperature": 0.3,
+          "top_p": 0.95,
+          "max_tokens": 2000
+        }
+      }
+    },
+    "shopping": {
+      "name": "쇼핑 에이전트",
+      "description": "쇼핑 검색 및 추천 기능을 제공하는 에이전트",
+      "type": "shopping",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 45,
+        "max_retries": 3,
+        "async_mode": true,
+        "debug": false,
+        "shopping_settings": {
+          "default_currency": "KRW",
+          "include_reviews": true,
+          "result_count": 15,
+          "sort_by": "relevance"
+        }
+      }
+    },
+    "analysis": {
+      "name": "분석 에이전트",
+      "description": "데이터 분석 기능을 제공하는 에이전트",
+      "type": "analysis",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 90,
+        "max_retries": 2,
+        "async_mode": true,
+        "debug": false,
+        "analysis_settings": {
+          "visualization": true,
+          "statistical_analysis": true,
+          "summary_generation": true,
+          "insight_detection": true
+        }
+      }
+    },
+    "task_classifier": {
+      "name": "태스크 분류 에이전트",
+      "description": "사용자 요청을 분류하고 적절한 에이전트로 라우팅하는 에이전트",
+      "type": "task_classifier",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 15,
+        "max_retries": 1,
+        "async_mode": true,
+        "debug": false,
+        "classifier_settings": {
+          "confidence_threshold": 0.7,
+          "default_agent": "llm_search",
+          "use_llm": true
+        }
+      }
+    },
+    "custom": {
+      "name": "사용자 정의 에이전트",
+      "description": "사용자 정의 기능을 제공하는 에이전트",
+      "type": "custom",
+      "version": "1.0.0",
+      "properties": {
+        "timeout": 60,
+        "max_retries": 3,
+        "async_mode": true,
+        "debug": false,
+        "custom_settings": {}
+      }
+    }
+  }
+} 

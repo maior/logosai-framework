@@ -1,0 +1,64 @@
+{
+    "message_bus": {
+        "enabled": true,
+        "retention": {
+            "max_messages_per_topic": 1000,
+            "max_age_seconds": 3600,
+            "cleanup_interval_seconds": 300
+        },
+        "performance": {
+            "max_queue_size": 100,
+            "processing_interval_ms": 50,
+            "batch_size": 10
+        }
+    },
+    "topics": {
+        "agent": {
+            "standard_format": "agent.<agent_id>.<message_type>",
+            "wildcards": ["agent.*.*", "agent.*.request", "agent.*.response", "agent.*.error"]
+        },
+        "workflow": {
+            "standard_format": "workflow.<workflow_id>.<node_id>.<event>",
+            "wildcards": ["workflow.*.*.*", "workflow.*.node.*", "workflow.*.event.*"]
+        },
+        "system": {
+            "standard_events": ["status", "config", "error", "shutdown"],
+            "wildcards": ["system.*"]
+        }
+    },
+    "subscriptions": {
+        "auto_reconnect": true,
+        "max_retries": 3,
+        "retry_delay_seconds": 1
+    },
+    "message_types": {
+        "agent": [
+            {"name": "inference_request", "description": "추론 요청"},
+            {"name": "inference_response", "description": "추론 응답"},
+            {"name": "knowledge_request", "description": "지식 검색 요청"},
+            {"name": "knowledge_response", "description": "지식 검색 응답"},
+            {"name": "retrieval_request", "description": "문서 검색 요청"},
+            {"name": "retrieval_response", "description": "문서 검색 응답"},
+            {"name": "tool_request", "description": "도구 사용 요청"},
+            {"name": "tool_response", "description": "도구 사용 응답"},
+            {"name": "internet_request", "description": "인터넷 검색 요청"},
+            {"name": "internet_response", "description": "인터넷 검색 응답"},
+            {"name": "agent_status", "description": "에이전트 상태 업데이트"},
+            {"name": "agent_error", "description": "에이전트 오류 보고"},
+            {"name": "image_request", "description": "이미지 생성 요청"},
+            {"name": "image_response", "description": "이미지 생성 응답"},
+            {"name": "analysis_request", "description": "데이터 분석 요청"},
+            {"name": "analysis_response", "description": "데이터 분석 응답"}
+        ],
+        "workflow": [
+            {"name": "workflow_start", "description": "워크플로우 시작"},
+            {"name": "workflow_end", "description": "워크플로우 종료"},
+            {"name": "workflow_error", "description": "워크플로우 오류"},
+            {"name": "node_entry", "description": "노드 진입"},
+            {"name": "node_exit", "description": "노드 종료"},
+            {"name": "node_error", "description": "노드 오류"},
+            {"name": "edge_traversal", "description": "엣지 이동"},
+            {"name": "state_update", "description": "상태 업데이트"}
+        ]
+    }
+} 

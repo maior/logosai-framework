@@ -1,0 +1,72 @@
+{
+    "nodes": {
+        "START": {
+            "name": "시작",
+            "description": "워크플로우 시작 노드",
+            "handler_type": "special",
+            "properties": {}
+        },
+        "END": {
+            "name": "종료",
+            "description": "워크플로우 종료 노드",
+            "handler_type": "special",
+            "properties": {}
+        },
+        "error": {
+            "name": "오류 처리",
+            "description": "오류 처리 노드",
+            "handler_type": "special",
+            "properties": {}
+        },
+        "success": {
+            "name": "성공 처리",
+            "description": "성공 처리 노드",
+            "handler_type": "special",
+            "properties": {}
+        },
+        "classifier": {
+            "name": "태스크 분류기",
+            "description": "사용자 쿼리를 분석하여 태스크 타입을 분류",
+            "handler_type": "agent",
+            "agent_id": "classifier",
+            "properties": {
+                "confidence_threshold": 0.7
+            }
+        },
+        "llm_search": {
+            "name": "LLM 검색",
+            "description": "LLM을 사용하여 지식 기반 검색 수행",
+            "handler_type": "agent",
+            "agent_id": "llm_search",
+            "properties": {}
+        },
+        "internet_search": {
+            "name": "인터넷 검색",
+            "description": "인터넷 검색 수행",
+            "handler_type": "agent",
+            "agent_id": "internet_search",
+            "properties": {}
+        },
+        "rag_search": {
+            "name": "RAG 검색",
+            "description": "RAG 검색 수행",
+            "handler_type": "agent",
+            "agent_id": "rag_search",
+            "properties": {}
+        },
+        "shopping": {
+            "name": "쇼핑",
+            "description": "쇼핑 관련 쿼리 처리",
+            "handler_type": "agent",
+            "agent_id": "shopping",
+            "properties": {}
+        },
+        "analyze": {
+            "name": "분석",
+            "description": "데이터 분석 쿼리 처리",
+            "handler_type": "agent",
+            "agent_id": "analyze",
+            "properties": {}
+        }
+    }
+} 

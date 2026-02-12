@@ -1,0 +1,1 @@
+"""Integration templates for external services"""

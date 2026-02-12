@@ -1,0 +1,18 @@
+{
+  "agents": [
+    {
+      "agent_id": "hello_agent",
+      "name": "Hello Agent",
+      "description": "A simple greeting agent",
+      "capabilities": ["greeting"],
+      "tags": ["sample", "basic"]
+    },
+    {
+      "agent_id": "calculator_agent",
+      "name": "Calculator Agent",
+      "description": "Evaluates arithmetic expressions safely",
+      "capabilities": ["calculation", "math"],
+      "tags": ["sample", "math"]
+    }
+  ]
+}

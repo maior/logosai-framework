@@ -1,0 +1,77 @@
+{
+  "base/basic_agent.py.jinja2": {
+    "name": "basic_agent",
+    "category": "base",
+    "description": "Basic LogosAI agent with standard structure and error handling",
+    "tags": ["basic", "starter", "general-purpose"],
+    "required_params": {
+      "agent_name": "Name of the agent",
+      "agent_class_name": "Python class name for the agent",
+      "description": "Description of what the agent does"
+    },
+    "optional_params": {
+      "dependencies": "List of required dependencies",
+      "setup_steps": "List of setup steps to perform",
+      "processing_logic": "Main processing logic code",
+      "required_fields": "List of required input fields",
+      "additional_methods": "List of additional method implementations",
+      "generator": "Name of the generator system",
+      "timestamp": "Generation timestamp",
+      "logosai_version": "LogosAI framework version"
+    },
+    "example_usage": "Suitable for general-purpose agents that need basic input/output processing"
+  },
+  "base/async_agent.py.jinja2": {
+    "name": "async_agent",
+    "category": "base",
+    "description": "Asynchronous LogosAI agent optimized for concurrent operations",
+    "tags": ["async", "concurrent", "performance"],
+    "required_params": {
+      "agent_name": "Name of the agent",
+      "agent_class_name": "Python class name for the agent",
+      "description": "Description of what the agent does"
+    },
+    "optional_params": {
+      "max_concurrent_tasks": "Maximum number of concurrent tasks",
+      "timeout": "Task timeout in seconds",
+      "processing_logic": "Main async processing logic"
+    },
+    "example_usage": "Best for agents that need to handle multiple requests concurrently"
+  },
+  "patterns/workflow_agent.py.jinja2": {
+    "name": "workflow_agent",
+    "category": "patterns",
+    "description": "Agent implementing workflow pattern with state management",
+    "tags": ["workflow", "state-management", "multi-step"],
+    "required_params": {
+      "agent_name": "Name of the agent",
+      "agent_class_name": "Python class name for the agent",
+      "description": "Description of what the agent does",
+      "workflow_steps": "List of workflow step definitions"
+    },
+    "optional_params": {
+      "state_persistence": "Enable state persistence",
+      "rollback_enabled": "Enable rollback on failure"
+    },
+    "example_usage": "Ideal for complex multi-step processes with state management"
+  },
+  "integrations/llm_agent.py.jinja2": {
+    "name": "llm_agent",
+    "category": "integrations",
+    "description": "Agent with built-in LLM integration capabilities",
+    "tags": ["llm", "ai", "language-model"],
+    "required_params": {
+      "agent_name": "Name of the agent",
+      "agent_class_name": "Python class name for the agent",
+      "description": "Description of what the agent does",
+      "llm_provider": "LLM provider (openai, google, etc.)"
+    },
+    "optional_params": {
+      "model_name": "Specific model to use",
+      "temperature": "Generation temperature",
+      "max_tokens": "Maximum tokens for generation",
+      "system_prompt": "System prompt for the LLM"
+    },
+    "example_usage": "Perfect for agents that need language model capabilities"
+  }
+}

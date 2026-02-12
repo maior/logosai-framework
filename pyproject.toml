@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "logosai"
+version = "0.7.0"
+description = "LogosAI SDK - 대화형 에이전트 개발 플랫폼 (Conversational Agent Development Platform)"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {file = "LICENSE"}
+keywords = ["ai", "agent", "llm", "sdk", "artificial intelligence"]
+authors = [
+    {name = "LogosAI Team", email = "info@logosai.info"}
+]
+maintainers = [
+    {name = "LogosAI Team", email = "info@logosai.info"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "aiohttp>=3.8.0",
+    "requests>=2.25.0",
+    "websocket-client>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "mypy>=0.900",
+]
+llm = [
+    "openai>=1.0.0",
+    "langchain>=0.0.300",
+]
+
+[project.urls]
+Homepage = "https://github.com/logosai/logosai"
+Documentation = "https://docs.logosai.dev"
+Repository = "https://github.com/logosai/logosai"
+Issues = "https://github.com/logosai/logosai/issues"
+
+[project.scripts]
+logosai-serve = "logosai.cli.serve:main"
+logosai-agent = "logosai.cli.agent:main"
+
+[tool.setuptools]
+packages = ["logosai"]
+
+[tool.black]
+line-length = 88
+target-version = ["py37", "py38", "py39", "py310", "py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+asyncio_mode = "auto" 

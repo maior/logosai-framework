@@ -1,0 +1,73 @@
+{
+    "agents": {
+        "classifier": {
+            "name": "태스크 분류기",
+            "description": "사용자 쿼리를 분석하여 태스크 타입을 분류하는 에이전트",
+            "type": "logos_sdk",
+            "module": "logosai.agents.task_classifier_agent",
+            "class": "TaskClassifierAgent",
+            "config": {
+                "confidence_threshold": 0.7,
+                "task_types": ["llm_search", "internet_search", "rag_search", "shopping", "analyze"]
+            }
+        },
+        "llm_search": {
+            "name": "LLM 검색 에이전트",
+            "description": "LLM을 사용하여 지식 기반 검색을 수행하는 에이전트",
+            "type": "logos_sdk",
+            "module": "logosai.agents.llm_search_agent",
+            "class": "LLMSearchAgent",
+            "config": {
+                "model": "gpt-4o",
+                "temperature": 0.7,
+                "max_tokens": 8000
+            }
+        },
+        "internet_search": {
+            "name": "인터넷 검색 에이전트",
+            "description": "인터넷 검색을 수행하는 에이전트",
+            "type": "logos_sdk",
+            "module": "logosai.agents.internet_search_agent",
+            "class": "InternetSearchAgent",
+            "config": {
+                "search_depth": "advanced",
+                "include_images": false,
+                "max_results": 5
+            }
+        },
+        "rag_search": {
+            "name": "RAG 검색 에이전트",
+            "description": "벡터 데이터베이스를 사용한 RAG 검색을 수행하는 에이전트",
+            "type": "logos_sdk",
+            "module": "logosai.agents.rag_search_agent",
+            "class": "RAGSearchAgent",
+            "config": {
+                "embedding_model": "text-embedding-3-small",
+                "retrieval_k": 5,
+                "similarity_threshold": 0.75
+            }
+        },
+        "shopping": {
+            "name": "쇼핑 에이전트",
+            "description": "쇼핑 관련 쿼리를 처리하는 에이전트",
+            "type": "logos_sdk",
+            "module": "logosai.agents.shopping_agent",
+            "class": "ShoppingAgent",
+            "config": {
+                "api": "sample_shopping_api",
+                "categories": ["electronics", "fashion", "books", "home"]
+            }
+        },
+        "analyze": {
+            "name": "분석 에이전트",
+            "description": "데이터 분석 쿼리를 처리하는 에이전트",
+            "type": "logos_sdk",
+            "module": "logosai.agents.analysis_agent",
+            "class": "AnalysisAgent",
+            "config": {
+                "analysis_types": ["text", "numeric", "categorical", "time_series"],
+                "visualization": true
+            }
+        }
+    }
+} 
