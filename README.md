@@ -12,6 +12,13 @@ A Python framework for building, orchestrating, and evolving AI agents.
 pip install logosai
 ```
 
+With LLM provider support:
+
+```bash
+pip install logosai[llm]   # OpenAI, Anthropic, Google Gemini, LangChain
+pip install logosai[all]   # All optional dependencies
+```
+
 Or install from source:
 
 ```bash
@@ -63,7 +70,7 @@ See the [samples/](samples/) directory for more examples.
 
 ### Core Agent Framework
 
-- **LogosAIAgent** base class with async lifecycle management (`initialize`, `process`)
+- **LogosAIAgent** base class with async lifecycle management (`initialize`, `process`, `shutdown`)
 - **AgentConfig** for flexible, config-driven agent behavior
 - **AgentResponse** with typed results (`SUCCESS`, `ERROR`, `PARTIAL`)
 - Multi-provider LLM client (OpenAI, Anthropic, Google Gemini, Ollama)
@@ -167,6 +174,7 @@ logosai/
 ├── agent_types.py        # Type definitions and enums
 ├── config/               # Configuration management
 ├── utils/                # LLM client, helpers
+├── agents/               # Built-in agent implementations
 ├── workflow/             # Workflow orchestration engine
 ├── message_bus/          # Pub/sub messaging system
 ├── debate/               # Agent Debate System
@@ -182,7 +190,7 @@ logosai/
 
 ## LLM Client
 
-Unified client supporting multiple providers:
+Unified client supporting multiple providers (requires `pip install logosai[llm]`):
 
 ```python
 from logosai.utils.llm_client import LLMClient
@@ -204,9 +212,16 @@ Supported providers: `openai`, `anthropic`, `google` (Gemini), `ollama`
 
 ## Requirements
 
+**Core** (installed automatically):
+
 - Python 3.8+
 - `aiohttp`, `requests`, `websocket-client`
-- LLM provider SDK (optional): `openai`, `anthropic`, `google-genai`
+- `pydantic`, `loguru`, `python-dotenv`
+
+**Optional** (install with `pip install logosai[llm]`):
+
+- `openai`, `anthropic`, `google-generativeai`
+- `langchain`, `langchain-openai`, `langchain-community`
 
 ## License
 

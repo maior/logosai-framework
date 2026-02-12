@@ -7,7 +7,7 @@ Minimal examples for the LogosAI agent framework. No external API keys, database
 | File | Description |
 |------|-------------|
 | `hello_agent.py` | Minimal agent (~20 lines of logic) |
-| `calculator_agent.py` | Math expression evaluator |
+| `calculator_agent.py` | Math expression evaluator with safe eval |
 | `sample_acp_server.py` | Mini ACP server hosting 2 agents |
 | `agents.json` | Sample agent configuration |
 
@@ -15,7 +15,7 @@ Minimal examples for the LogosAI agent framework. No external API keys, database
 
 ```bash
 # Install SDK
-pip install logosai aiohttp
+pip install logosai
 
 # Run a single agent
 python hello_agent.py
@@ -23,7 +23,8 @@ python hello_agent.py
 # Run calculator
 python calculator_agent.py
 
-# Start a mini ACP server
+# Start a mini ACP server (requires aiohttp_cors)
+pip install aiohttp_cors
 python sample_acp_server.py
 # Test:
 curl http://localhost:9000/jsonrpc \
@@ -34,6 +35,7 @@ curl http://localhost:9000/jsonrpc \
 ## Creating Your Own Agent
 
 ```python
+import asyncio
 from logosai.agent import LogosAIAgent
 from logosai.config import AgentConfig
 from logosai.types import AgentType, AgentResponse, AgentResponseType
@@ -44,7 +46,6 @@ class MyAgent(LogosAIAgent):
             name="My Agent",
             agent_type=AgentType.CUSTOM,
             description="What my agent does",
-            version="1.0.0",
         )
         super().__init__(config)
 
@@ -55,6 +56,15 @@ class MyAgent(LogosAIAgent):
             content={"answer": "result"},
             message="Done",
         )
+
+async def main():
+    agent = MyAgent()
+    await agent.initialize()
+    result = await agent.process("Hello!")
+    print(result.content["answer"])
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-See the [LogosAI documentation](../docs/) for more details.
+See the [main README](../README.md) for full documentation.
