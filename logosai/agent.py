@@ -9,8 +9,14 @@ import logging
 from typing import Dict, Any, Optional, Union, List, Tuple
 from .agent_types import AgentType, AgentResponse, AgentResponseType
 from .config import AgentConfig
-from langchain_openai import ChatOpenAI
 from loguru import logger
+
+# Optional LLM dependency
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
+
 from .agent_self_assessment import AgentSelfAssessment, SelfAssessmentResult
 from .dialogue_protocol import SimpleDialogueProtocol, DialogueCapability, DialogueMessage, DialogueTurn
 

@@ -70,7 +70,7 @@ def check_version():
     from .. import __version__ as logosai_version
     
     if logosai_version < "1.1.0":
-        logger.warning(f"ACP 모듈은 LogosAI 버전 1.1.0 이상에서 가장 잘 작동합니다. 현재 버전: {logosai_version}")
+        logger.debug(f"ACP module works best with LogosAI >= 1.1.0. Current: {logosai_version}")
     
     return __version__
 

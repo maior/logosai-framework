@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logosai"
-version = "0.7.0"
-description = "LogosAI SDK - 대화형 에이전트 개발 플랫폼 (Conversational Agent Development Platform)"
+version = "0.7.1"
+description = "A Python framework for building, orchestrating, and evolving AI agents"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = {file = "LICENSE"}
-keywords = ["ai", "agent", "llm", "sdk", "artificial intelligence"]
+keywords = ["ai", "agent", "llm", "multi-agent", "orchestration", "framework"]
 authors = [
     {name = "LogosAI Team", email = "info@logosai.info"}
 ]
@@ -18,11 +18,11 @@ maintainers = [
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -33,6 +33,9 @@ dependencies = [
     "aiohttp>=3.8.0",
     "requests>=2.25.0",
     "websocket-client>=1.2.0",
+    "pydantic>=2.0.0",
+    "loguru>=0.7.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -44,25 +47,35 @@ dev = [
 ]
 llm = [
     "openai>=1.0.0",
-    "langchain>=0.0.300",
+    "anthropic>=0.3.0",
+    "google-generativeai>=0.2.0",
+    "langchain>=0.1.0",
+    "langchain-openai>=0.0.8",
+    "langchain-community>=0.0.28",
+]
+all = [
+    "logosai[llm]",
+    "tavily-python>=0.3.0",
+    "rich>=13.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/logosai/logosai"
-Documentation = "https://docs.logosai.dev"
-Repository = "https://github.com/logosai/logosai"
-Issues = "https://github.com/logosai/logosai/issues"
+Homepage = "https://github.com/maior/logosai-framework"
+Documentation = "https://github.com/maior/logosai-framework#readme"
+Repository = "https://github.com/maior/logosai-framework"
+Issues = "https://github.com/maior/logosai-framework/issues"
 
 [project.scripts]
 logosai-serve = "logosai.cli.serve:main"
 logosai-agent = "logosai.cli.agent:main"
 
-[tool.setuptools]
-packages = ["logosai"]
+[tool.setuptools.packages.find]
+include = ["logosai*"]
+exclude = ["logosai.examples*", "tests*"]
 
 [tool.black]
 line-length = 88
-target-version = ["py37", "py38", "py39", "py310", "py311"]
+target-version = ["py38", "py39", "py310", "py311"]
 
 [tool.isort]
 profile = "black"
@@ -72,8 +85,6 @@ line_length = 88
 python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -81,4 +92,4 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-asyncio_mode = "auto" 
+asyncio_mode = "auto"

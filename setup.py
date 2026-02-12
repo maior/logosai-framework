@@ -18,8 +18,8 @@ setup(
     description="AI Agent Development Framework",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/logosai/logosai",
-    packages=find_packages(exclude=["logosai.examples", "logosai.examples.*"]),
+    url="https://github.com/maior/logosai-framework",
+    packages=find_packages(exclude=["logosai.examples", "logosai.examples.*", "tests", "tests.*"]),
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

@@ -4,7 +4,7 @@ LogosAI SDK - 대화형 에이전트 개발 플랫폼
 에이전트 개발을 간소화하는 통합 SDK를 제공합니다.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 __author__ = "LogosAI Team"
 __license__ = "MIT"
 __description__ = "Conversational Agent Development Platform"

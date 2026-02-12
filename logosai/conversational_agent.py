@@ -34,9 +34,8 @@ try:
         InteractiveParameterCollector, CollectionStrategy
     )
     DJANGO_INTEGRATION_AVAILABLE = True
-    logger.info("Django 통합 모듈 로드 성공")
 except ImportError as e:
-    logger.warning(f"Django 통합 모듈 로드 실패: {e}")
+    logger.debug(f"Django integration not available (standalone mode): {e}")
     DJANGO_INTEGRATION_AVAILABLE = False
     
     # 더미 클래스 정의
