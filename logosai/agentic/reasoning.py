@@ -204,7 +204,7 @@ class AgenticReasoning:
             # Parse response
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 # Fallback parsing
                 result = {
                     "initial_thoughts": ["Analyzing the problem"],
@@ -307,7 +307,7 @@ class AgenticReasoning:
             # Parse response
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 result = {
                     "thought": "Processing observation",
                     "reasoning": response.content,
@@ -378,7 +378,7 @@ class AgenticReasoning:
             # Parse response
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 result = {
                     "root_thought": "Analyzing problem",
                     "branches": [
@@ -525,7 +525,7 @@ class AgenticReasoning:
             # Parse response
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 result = {
                     "sub_problems": [
                         {

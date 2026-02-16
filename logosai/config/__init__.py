@@ -1,7 +1,7 @@
 """
-LogosAI 설정 모듈
+LogosAI Configuration Module
 
-이 모듈은 LogosAI의 설정 관련 기능을 제공합니다.
+This module provides LogosAI configuration-related functionality.
 """
 
 from .agent_config import AgentConfig

@@ -351,7 +351,7 @@ class FeedbackCollector:
                 try:
                     rating = int(explicit.split("Rating:")[1].split("/")[0].strip())
                     return rating >= 3
-                except:
+                except (ValueError, IndexError):
                     pass
 
         # 암묵적 신호 분석

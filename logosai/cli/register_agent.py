@@ -102,7 +102,7 @@ class AgentRegistrar:
             try:
                 error_data = e.response.json()
                 error_msg += json.dumps(error_data, ensure_ascii=False, indent=2)
-            except:
+            except (json.JSONDecodeError, ValueError):
                 error_msg += e.response.text
                 
             logger.error(error_msg)

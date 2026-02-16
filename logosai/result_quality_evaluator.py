@@ -301,7 +301,7 @@ class ResultQualityEvaluator:
                 if score > 1:  # 퍼센트로 입력된 경우
                     score /= 100
                 overall_score = min(1.0, max(0.0, score))
-            except:
+            except (ValueError, IndexError):
                 pass
         
         return QualityScore(
@@ -374,17 +374,17 @@ def create_evaluation_request(query: str, result: Any, agent_id: str,
 if __name__ == "__main__":
     async def test_quality_evaluator():
         from logosai.utils.llm_client import LLMClient
-        
+
         # LLM 클라이언트 생성
         llm_client = LLMClient(provider="google", model="gemini-2.5-flash-lite")
         await llm_client.initialize()
-        
+
         # 품질 평가기 생성
         evaluator = ResultQualityEvaluator(llm_client, {
             "min_score_threshold": 0.7,
             "evaluation_timeout": 10.0
         })
-        
+
         # 테스트 케이스들
         test_cases = [
             {
@@ -403,29 +403,29 @@ if __name__ == "__main__":
                 "agent_id": "text_agent"
             }
         ]
-        
+
         for i, case in enumerate(test_cases, 1):
-            print(f"\n=== 테스트 케이스 {i} ===")
-            print(f"쿼리: {case['query']}")
-            print(f"결과: {case['result']}")
-            
+            logger.info(f"\n=== 테스트 케이스 {i} ===")
+            logger.info(f"쿼리: {case['query']}")
+            logger.info(f"결과: {case['result']}")
+
             request = create_evaluation_request(
                 query=case["query"],
                 result=case["result"],
                 agent_id=case["agent_id"]
             )
-            
+
             quality_score = await evaluator.evaluate_result(request)
-            
-            print(f"품질 점수: {quality_score.overall_score:.2f}")
-            print(f"수용 가능: {evaluator.is_result_acceptable(quality_score)}")
-            print(f"이유: {quality_score.reasoning}")
-        
+
+            logger.info(f"품질 점수: {quality_score.overall_score:.2f}")
+            logger.info(f"수용 가능: {evaluator.is_result_acceptable(quality_score)}")
+            logger.info(f"이유: {quality_score.reasoning}")
+
         # 성능 통계
         stats = evaluator.get_performance_stats()
-        print(f"\n=== 성능 통계 ===")
-        print(f"총 평가 수: {stats['total_evaluations']}")
-        print(f"캐시 적중률: {stats['cache_hit_rate']:.2%}")
-    
+        logger.info(f"\n=== 성능 통계 ===")
+        logger.info(f"총 평가 수: {stats['total_evaluations']}")
+        logger.info(f"캐시 적중률: {stats['cache_hit_rate']:.2%}")
+
     # 테스트 실행
     # asyncio.run(test_quality_evaluator())

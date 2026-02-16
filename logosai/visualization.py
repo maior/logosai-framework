@@ -190,7 +190,7 @@ class DataAnalyzer:
                                     for item in data)
                     if all_numeric:
                         numeric_fields.append(key)
-                except:
+                except (TypeError, ValueError):
                     pass
             
             if time_fields and numeric_fields:
@@ -742,9 +742,9 @@ if __name__ == "__main__":
     )
     
     if chart:
-        print("차트 생성 성공!")
-        print(f"타입: {chart['type']}")
-        print(f"라벨 수: {len(chart['data']['labels'])}")
-        print(f"데이터셋 수: {len(chart['data']['datasets'])}")
+        logger.info("차트 생성 성공!")
+        logger.info(f"타입: {chart['type']}")
+        logger.info(f"라벨 수: {len(chart['data']['labels'])}")
+        logger.info(f"데이터셋 수: {len(chart['data']['datasets'])}")
     else:
-        print("차트 생성 실패")
+        logger.error("차트 생성 실패")

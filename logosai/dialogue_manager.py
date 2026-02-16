@@ -617,7 +617,7 @@ if __name__ == "__main__":
             agent_id="weather_agent",
             query="서울 날씨 알려줘"
         )
-        
-        print(f"대화 결과: {result}")
+
+        logger.info(f"대화 결과: {result}")
     
     asyncio.run(example())

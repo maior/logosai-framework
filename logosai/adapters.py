@@ -167,7 +167,7 @@ class LegacyAgentWrapper(LogosAIAgent):
                 if isinstance(legacy_result, bool) and not legacy_result:
                     return False
             except Exception as e:
-                print(f"기존 에이전트 초기화 중 오류: {str(e)}")
+                logger.error(f"기존 에이전트 초기화 중 오류: {str(e)}")
                 return False
         
         return True
@@ -179,7 +179,7 @@ class LegacyAgentWrapper(LogosAIAgent):
             try:
                 await self.legacy_agent.close()
             except Exception as e:
-                print(f"기존 에이전트 종료 중 오류: {str(e)}")
+                logger.error(f"기존 에이전트 종료 중 오류: {str(e)}")
         
         # 상위 클래스 종료
         await super().shutdown()

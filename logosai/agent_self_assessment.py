@@ -298,7 +298,7 @@ class AgentSelfAssessment:
                     confidence_line = [line for line in content.split("\n") if "적합성:" in line][0]
                     confidence_str = confidence_line.split("적합성:")[1].strip().replace("%", "")
                     llm_confidence = float(confidence_str) / 100.0
-                except:
+                except (ValueError, IndexError):
                     pass
             
             llm_reasoning = [content.strip()]

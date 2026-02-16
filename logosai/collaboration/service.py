@@ -1,8 +1,8 @@
 """
-CollaborationService — 에이전트 간 협업 서비스 인터페이스
+CollaborationService — Inter-agent collaboration service interface
 
-ACP 서버(또는 런타임)가 이 인터페이스를 구현하여
-에이전트에 주입(inject)한다.
+The ACP server (or runtime) implements this interface
+and injects it into agents.
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ logger = logging.getLogger(__name__)
 
 class CollaborationService(ABC):
     """
-    에이전트 간 협업 서비스 추상 클래스.
+    Abstract class for inter-agent collaboration service.
 
-    ACP 서버가 이 클래스를 구현하고,
-    에이전트 로드 시 agent.set_collaboration_service(service)로 주입한다.
+    The ACP server implements this class and
+    injects it via agent.set_collaboration_service(service) when loading agents.
     """
 
     def __init__(self):
@@ -44,14 +44,14 @@ class CollaborationService(ABC):
         self, capability: str, exclude_ids: Optional[List[str]] = None
     ) -> List[AgentCapability]:
         """
-        특정 능력을 가진 에이전트 목록 조회.
+        Query list of agents with specific capability.
 
         Args:
-            capability: 필요한 능력 (예: "translation", "document_processing")
-            exclude_ids: 제외할 에이전트 ID 목록
+            capability: Required capability (e.g., "translation", "document_processing")
+            exclude_ids: List of agent IDs to exclude
 
         Returns:
-            매칭된 에이전트 목록
+            List of matched agents
         """
 
     @abstractmethod
@@ -59,15 +59,15 @@ class CollaborationService(ABC):
         self, capability: str, query: str, exclude_ids: Optional[List[str]] = None
     ) -> Optional[AgentCapability]:
         """
-        주어진 능력과 쿼리에 가장 적합한 에이전트 선택.
+        Select the most suitable agent for given capability and query.
 
         Args:
-            capability: 필요한 능력
-            query: 처리할 쿼리 (선택 시 참고)
-            exclude_ids: 제외할 에이전트 ID 목록
+            capability: Required capability
+            query: Query to process (used as reference for selection)
+            exclude_ids: List of agent IDs to exclude
 
         Returns:
-            선택된 에이전트, 없으면 None
+            Selected agent, or None if not found
         """
 
     @abstractmethod
@@ -75,16 +75,16 @@ class CollaborationService(ABC):
         self, agent_id: str, query: str, context: Dict[str, Any]
     ) -> Any:
         """
-        실제 에이전트에서 쿼리 실행.
-        ACP 서버 구현에서 in-process 호출 또는 HTTP 호출.
+        Execute query on actual agent.
+        In ACP server implementation, use in-process or HTTP call.
 
         Args:
-            agent_id: 대상 에이전트 ID
-            query: 실행할 쿼리
-            context: 실행 컨텍스트
+            agent_id: Target agent ID
+            query: Query to execute
+            context: Execution context
 
         Returns:
-            에이전트 실행 결과 (AgentResponse 또는 dict)
+            Agent execution result (AgentResponse or dict)
         """
 
     async def invoke(
@@ -97,31 +97,31 @@ class CollaborationService(ABC):
         parent_request: Optional[CollaborationRequest] = None,
     ) -> CollaborationResult:
         """
-        다른 에이전트를 호출하여 협업 수행.
+        Perform collaboration by calling another agent.
 
-        내부적으로:
-        1. 콜 그래프에서 루프/깊이 체크
-        2. 적합한 에이전트 선택
-        3. 타임아웃 적용하여 실행
-        4. 결과 반환
+        Internally:
+        1. Check loop/depth in call graph
+        2. Select suitable agent
+        3. Execute with timeout
+        4. Return result
 
         Args:
-            caller: 호출하는 에이전트
-            capability: 필요한 능력
-            query: 처리할 쿼리
-            context: 추가 컨텍스트
-            timeout: 타임아웃 (초). None이면 점감 타임아웃 적용
-            parent_request: 상위 요청 (체인 추적용)
+            caller: Calling agent
+            capability: Required capability
+            query: Query to process
+            context: Additional context
+            timeout: Timeout in seconds. If None, applies decreasing timeout
+            parent_request: Parent request (for chain tracking)
         """
         start_time = time.time()
         context = context or {}
 
-        # 요청 빌드
+        # Build request
         if parent_request:
             depth = parent_request.depth + 1
             call_chain = parent_request.call_chain + [caller.id]
             parent_id = parent_request.request_id
-            # 점감 타임아웃: 상위 타임아웃의 70%
+            # Decreasing timeout: 70% of parent timeout
             default_timeout = parent_request.timeout * 0.7
         else:
             depth = 0
@@ -144,11 +144,11 @@ class CollaborationService(ABC):
             call_chain=call_chain,
         )
 
-        # 에이전트 선택
+        # Agent selection
         selected = await self.select_agent(
             capability=capability,
             query=query,
-            exclude_ids=call_chain,  # 콜 체인에 있는 에이전트 제외
+            exclude_ids=call_chain,  # Exclude agents in call chain
         )
 
         if not selected:
@@ -160,7 +160,7 @@ class CollaborationService(ABC):
                 call_chain=call_chain,
             )
 
-        # 콜 그래프 체크 + 추적
+        # Call graph check + tracking
         async with self.call_graph.track_call(
             request_id=request.request_id,
             caller_id=caller.id,
@@ -183,7 +183,7 @@ class CollaborationService(ABC):
                     call_chain=call_chain,
                 )
 
-            # 타임아웃 적용하여 실행
+            # Execute with timeout
             exec_context = {
                 **context,
                 "_collaboration": {

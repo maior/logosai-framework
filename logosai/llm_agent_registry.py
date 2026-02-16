@@ -459,29 +459,29 @@ async def example_llm_agent_call(user_query: str):
     """LLM을 통한 에이전트 호출 예제"""
     # 레지스트리 생성
     registry = await create_example_registry()
-    
+
     # LLM 클라이언트 설정 (실제 구현에서는 API 키 등 필요)
     try:
         from openai import AsyncOpenAI
         llm_client = AsyncOpenAI(api_key="your_api_key")
     except ImportError:
         llm_client = None
-        print("OpenAI 패키지가 설치되지 않았습니다. 더미 LLM 클라이언트를 사용합니다.")
-    
+        logger.info("OpenAI 패키지가 설치되지 않았습니다. 더미 LLM 클라이언트를 사용합니다.")
+
     # 라우터 생성
     router = LLMAgentRouter(registry, llm_client)
-    
+
     # 쿼리 라우팅 및 처리
     result = await router.route_query(user_query)
-    
+
     # 결과 출력
     if result.type == AgentResponseType.ERROR:
-        print(f"오류: {result.message}")
+        logger.error(f"오류: {result.message}")
         return None
     else:
-        print(f"선택된 에이전트: {result.metadata.get('selected_agent', {}).get('name', '알 수 없음')}")
-        print(f"선택 이유: {result.metadata.get('selected_agent', {}).get('reason', '알 수 없음')}")
-        print(f"응답: {result.message}")
+        logger.info(f"선택된 에이전트: {result.metadata.get('selected_agent', {}).get('name', '알 수 없음')}")
+        logger.info(f"선택 이유: {result.metadata.get('selected_agent', {}).get('reason', '알 수 없음')}")
+        logger.info(f"응답: {result.message}")
         return result
         
 
@@ -550,15 +550,15 @@ if __name__ == "__main__":
     def run_async(coro):
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(coro)
-    
+
     # 사용자 쿼리 예시
     user_query = "2023년 노벨상 수상자들은 누구인가요?"
-    
+
     # 예제 실행
     result = run_async(example_llm_agent_call(user_query))
-    
+
     # 레지스트리 JSON 출력 예시
     registry = run_async(create_example_registry())
     registry_json = registry.get_llm_registry_json()
-    print("\n에이전트 레지스트리 JSON:")
-    print(registry_json) 
+    logger.info("\n에이전트 레지스트리 JSON:")
+    logger.info(registry_json) 

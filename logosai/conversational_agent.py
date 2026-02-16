@@ -729,9 +729,9 @@ if __name__ == "__main__":
         
         # 처리 실행 (파라미터가 자동으로 수집됨)
         result = await agent.process_with_conversation("서울의 일주일 날씨를 보여줘")
-        
-        print(f"결과: {result.message}")
-        print(f"내용: {result.content}")
+
+        logger.info(f"결과: {result.message}")
+        logger.info(f"내용: {result.content}")
         
         await agent.shutdown()
     

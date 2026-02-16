@@ -1,47 +1,55 @@
 """
-LogosAI SDK - 대화형 에이전트 개발 플랫폼
+LogosAI SDK - Conversational Agent Development Platform
 
-에이전트 개발을 간소화하는 통합 SDK를 제공합니다.
+A Python framework for building, orchestrating, and evolving AI agents.
 """
 
-__version__ = "0.7.1"
+import logging as _logging
+import os as _os
+
+__version__ = "0.8.1"
 __author__ = "LogosAI Team"
 __license__ = "MIT"
 __description__ = "Conversational Agent Development Platform"
 
-from .agent import LogosAIAgent
+_logger = _logging.getLogger(__name__)
+
+# === Core exports (always available) ===
+from .agent import LogosAIAgent, create_agent
 from .agent_types import (
     AgentType,
     AgentResponseType,
     AgentResponse,
     TaskType,
     ClassificationResult,
-    get_agent_types
+    get_agent_types,
 )
 from .config import AgentConfig
-from .agent_bundler import AgentBundler, BundleType, BundleConfig
-from .agent_router import AgentRouter, get_router, route_error, process_with_fallback
 
-# Initialize __all__ first
 __all__ = [
     "LogosAIAgent",
+    "create_agent",
     "AgentType",
     "AgentResponseType",
     "AgentResponse",
     "AgentConfig",
-    "AgentBundler",
-    "BundleType",
-    "BundleConfig",
     "TaskType",
     "ClassificationResult",
     "get_agent_types",
-    "AgentRouter",
-    "get_router",
-    "route_error",
-    "process_with_fallback",
 ]
 
-# Enhanced base classes (v0.2.0)
+# === Bundler & Router ===
+try:
+    from .agent_bundler import AgentBundler, BundleType, BundleConfig
+    from .agent_router import AgentRouter, get_router, route_error, process_with_fallback
+    __all__ += [
+        "AgentBundler", "BundleType", "BundleConfig",
+        "AgentRouter", "get_router", "route_error", "process_with_fallback",
+    ]
+except ImportError as e:
+    _logger.debug("Bundler/Router not available: %s", e)
+
+# === Enhanced base classes (v0.2.0) ===
 try:
     from .base_agent import (
         EnhancedLogosAIAgent,
@@ -49,20 +57,16 @@ try:
         LLMPoweredAgent,
         APIBasedAgent,
         GameAgent,
-        SearchAgent
+        SearchAgent,
     )
     __all__ += [
-        "EnhancedLogosAIAgent",
-        "ServiceBasedAgent",
-        "LLMPoweredAgent",
-        "APIBasedAgent",
-        "GameAgent",
-        "SearchAgent"
+        "EnhancedLogosAIAgent", "ServiceBasedAgent", "LLMPoweredAgent",
+        "APIBasedAgent", "GameAgent", "SearchAgent",
     ]
-except ImportError:
-    pass
+except ImportError as e:
+    _logger.debug("Enhanced base classes not available: %s", e)
 
-# Agent utilities (v0.2.0)
+# === Agent utilities (v0.2.0) ===
 try:
     from .agent_utils import (
         MarkdownFormatter,
@@ -71,66 +75,38 @@ try:
         APIClient,
         ConfigValidator,
         PerformanceMonitor,
-        create_test_harness
+        create_test_harness,
     )
     __all__ += [
-        "MarkdownFormatter",
-        "ResponseBuilder",
-        "QueryParser",
-        "APIClient",
-        "ConfigValidator",
-        "PerformanceMonitor",
-        "create_test_harness"
+        "MarkdownFormatter", "ResponseBuilder", "QueryParser",
+        "APIClient", "ConfigValidator", "PerformanceMonitor",
+        "create_test_harness",
     ]
-except ImportError:
-    pass
+except ImportError as e:
+    _logger.debug("Agent utilities not available: %s", e)
 
-# 타입 및 기본 클래스 가져오기
-from .agent_types import AgentType, AgentResponseType
+# === Message Bus ===
+try:
+    from .message_bus import MessageBus
+    __all__ += ["MessageBus"]
+except ImportError as e:
+    _logger.debug("MessageBus not available: %s", e)
 
-# 순환 참조 문제 해결을 위해 import 순서 변경 
-# 먼저 .config에서 AgentConfig를 사용하는 파일들 가져오기 전에 AgentConfig를 가져옴
-import sys
-import os
-
-# config.py 파일 경로 확인
-package_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(package_dir, "config.py")
-if not os.path.exists(config_path):
-    # config.py 파일이 없는 경우 대안으로 AgentConfig 클래스 정의
-    class AgentConfig:
-        def __init__(self, name, agent_type, description="", **kwargs):
-            self.name = name
-            self.agent_type = agent_type
-            self.description = description
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-else:
-    # 직접 config.py의 AgentConfig 가져오기
-    from .config import AgentConfig
-
-from .agent import LogosAIAgent, AgentResponse, create_agent
-
-# 유틸리티 및 기타 모듈
-from .message_bus import MessageBus
-
-# ACP 모듈 가져오기 (선택적)
+# === ACP module (optional) ===
 try:
     from .acp import ACPServer, ACPClient
     __all__ += ["ACPServer", "ACPClient"]
-except ImportError:
-    # ACP 모듈을 가져올 수 없는 경우 (예: 아직 설치되지 않음)
-    pass
+except ImportError as e:
+    _logger.debug("ACP module not available: %s", e)
 
-# Agent Market 모듈 가져오기 (선택적)
+# === Agent Market (optional) ===
 try:
     from .market import AgentMarket, AgentMarketTools, get_market
     __all__ += ["AgentMarket", "AgentMarketTools", "get_market"]
-except ImportError:
-    # Market 모듈을 가져올 수 없는 경우
-    pass
+except ImportError as e:
+    _logger.debug("Agent Market not available: %s", e)
 
-# ConversationalAgent 시스템 (v2.0.0)
+# === ConversationalAgent system (v2.0.0) ===
 try:
     from .conversational_agent import (
         ConversationalAgent,
@@ -140,9 +116,8 @@ try:
         auto_param_collection,
         visualizable,
         conversational_agent,
-        create_simple_conversational_agent
+        create_simple_conversational_agent,
     )
-    
     from .dialogue_manager import (
         DialogueManager,
         DialogueSession,
@@ -150,9 +125,8 @@ try:
         get_dialogue_manager,
         initialize_dialogue_system,
         quick_dialogue,
-        register_agent
+        register_agent,
     )
-    
     from .decorators import (
         parameter,
         auto_validate,
@@ -162,9 +136,8 @@ try:
         type_aware_parameters,
         monitoring,
         production_ready,
-        ValidationRule
+        ValidationRule,
     )
-    
     from .visualization import (
         VisualizationEngine,
         ChartConfig,
@@ -172,129 +145,85 @@ try:
         get_visualization_engine,
         auto_chart,
         weather_chart,
-        comparison_chart
+        comparison_chart,
     )
-    
+
     __all__ += [
-        # ConversationalAgent 시스템
-        "ConversationalAgent",
-        "ConversationContext", 
-        "ParameterDefinition",
-        "VisualizationConfig",
-        "auto_param_collection",
-        "visualizable",
-        "conversational_agent",
-        "create_simple_conversational_agent",
-        
-        # 대화 관리
-        "DialogueManager",
-        "DialogueSession",
-        "DialogueState", 
-        "get_dialogue_manager",
-        "initialize_dialogue_system",
-        "quick_dialogue",
-        "register_agent",
-        
-        # 데코레이터
-        "parameter",
-        "auto_validate",
-        "smart_caching",
-        "retry_on_failure",
-        "rate_limit",
-        "type_aware_parameters",
-        "monitoring",
-        "production_ready",
-        "ValidationRule",
-        
-        # 시각화
-        "VisualizationEngine",
-        "ChartConfig",
-        "DataPattern",
-        "get_visualization_engine",
-        "auto_chart",
-        "weather_chart",
-        "comparison_chart"
+        # ConversationalAgent
+        "ConversationalAgent", "ConversationContext",
+        "ParameterDefinition", "VisualizationConfig",
+        "auto_param_collection", "visualizable",
+        "conversational_agent", "create_simple_conversational_agent",
+        # Dialogue
+        "DialogueManager", "DialogueSession", "DialogueState",
+        "get_dialogue_manager", "initialize_dialogue_system",
+        "quick_dialogue", "register_agent",
+        # Decorators
+        "parameter", "auto_validate", "smart_caching",
+        "retry_on_failure", "rate_limit", "type_aware_parameters",
+        "monitoring", "production_ready", "ValidationRule",
+        # Visualization
+        "VisualizationEngine", "ChartConfig", "DataPattern",
+        "get_visualization_engine", "auto_chart",
+        "weather_chart", "comparison_chart",
     ]
-    
-    # 빠른 시작 도우미
+
     def quick_agent(name: str, execute_func, **kwargs):
-        """빠른 에이전트 생성 도우미
-        
+        """Quick helper to create a simple conversational agent.
+
         Args:
-            name: 에이전트 이름
-            execute_func: 실행 함수
-            **kwargs: 추가 설정
-        
+            name: Agent name.
+            execute_func: Async function(query, params) -> result.
+            **kwargs: Additional settings passed to create_simple_conversational_agent.
+
         Returns:
-            ConversationalAgent: 생성된 에이전트
-        
-        Example:
-            >>> async def my_func(query, params):
-            ...     return f"Hello {params.get('name', 'World')}"
-            >>> 
-            >>> agent = quick_agent("Hello Agent", my_func, 
-            ...                    parameters=['name'])
-            >>> await agent.initialize()
+            ConversationalAgent instance.
         """
         return create_simple_conversational_agent(
-            name=name,
-            execute_func=execute_func,
-            **kwargs
+            name=name, execute_func=execute_func, **kwargs
         )
-    
-    __all__ += ["quick_agent"]
-    
-    # SDK 정보 출력
+
     def sdk_info():
-        """SDK 정보 출력"""
+        """Print SDK version and feature summary."""
         info = f"""
     ╔══════════════════════════════════════════╗
-    ║             LogosAI SDK v{__version__}              ║
+    ║           LogosAI SDK v{__version__}                ║
     ╠══════════════════════════════════════════╣
-    ║  🤖 대화형 에이전트 개발 플랫폼          ║
+    ║  Conversational Agent Development        ║
     ║                                          ║
-    ║  주요 기능:                              ║
-    ║  • 자동 파라미터 수집                   ║
-    ║  • 시각화 지원                          ║
-    ║  • 프로덕션 준비 도구                   ║
-    ║  • Django 서버 통합                     ║
+    ║  Features:                               ║
+    ║  • Auto parameter collection             ║
+    ║  • Visualization support                 ║
+    ║  • Production-ready tooling              ║
+    ║  • Agent collaboration & evolution       ║
     ║                                          ║
-    ║  문서: https://docs.logosai.com          ║
-    ║  예제: logosai/examples/                 ║
+    ║  Docs: https://github.com/maior/         ║
+    ║        logosai-framework                 ║
     ╚══════════════════════════════════════════╝
         """
-        print(info)
-    
-    __all__ += ["sdk_info"]
-    
-    # 백워드 호환성을 위한 별칭
+        _logger.info(info)
+
+    # Backward-compatible aliases
     Agent = LogosAIAgent
     ConvAgent = ConversationalAgent
-    __all__ += ["Agent", "ConvAgent"]
-    
-except ImportError as e:
-    # ConversationalAgent 모듈을 가져올 수 없는 경우
-    print(f"Warning: ConversationalAgent 시스템을 로드할 수 없습니다: {e}")
-    pass
+    __all__ += ["quick_agent", "sdk_info", "Agent", "ConvAgent"]
 
-# Debate System (v0.5.0)
+except ImportError as e:
+    _logger.debug("ConversationalAgent system not available: %s", e)
+
+# === Debate System (v0.5.0) ===
 try:
     from .debate import (
         SimpleDebateSystem,
         DebateResult,
         VotingSystem,
-        Vote
+        Vote,
     )
-    __all__ += [
-        "SimpleDebateSystem",
-        "DebateResult",
-        "VotingSystem",
-        "Vote"
-    ]
-except ImportError:
-    pass
+    __all__ += ["SimpleDebateSystem", "DebateResult", "VotingSystem", "Vote"]
+except ImportError as e:
+    _logger.debug("Debate system not available: %s", e)
 
-# Template System (v0.4.0)
+# === Template System (v0.4.0) ===
 try:
     from .templates import (
         TemplateEngine,
@@ -302,20 +231,16 @@ try:
         TemplateRenderer,
         TemplateValidator,
         TemplateRegistry,
-        TemplateMetadata
+        TemplateMetadata,
     )
     __all__ += [
-        "TemplateEngine",
-        "TemplateLoader",
-        "TemplateRenderer",
-        "TemplateValidator",
-        "TemplateRegistry",
-        "TemplateMetadata"
+        "TemplateEngine", "TemplateLoader", "TemplateRenderer",
+        "TemplateValidator", "TemplateRegistry", "TemplateMetadata",
     ]
-except ImportError:
-    pass
+except ImportError as e:
+    _logger.debug("Template system not available: %s", e)
 
-# Evolution System (v0.7.0) - Agent Self-Evolution
+# === Evolution System (v0.7.0) ===
 try:
     from .evolution import (
         EvolutionSystem,
@@ -327,24 +252,17 @@ try:
         GateAction,
         DetectedProblem,
         Improvement,
-        create_evolution_system
+        create_evolution_system,
     )
     __all__ += [
-        "EvolutionSystem",
-        "EvolutionConfig",
-        "EvolutionMode",
-        "EvolutionResult",
-        "ProblemType",
-        "Severity",
-        "GateAction",
-        "DetectedProblem",
-        "Improvement",
-        "create_evolution_system"
+        "EvolutionSystem", "EvolutionConfig", "EvolutionMode",
+        "EvolutionResult", "ProblemType", "Severity", "GateAction",
+        "DetectedProblem", "Improvement", "create_evolution_system",
     ]
-except ImportError:
-    pass
+except ImportError as e:
+    _logger.debug("Evolution system not available: %s", e)
 
-# Collaboration System (v0.8.0) - Agent-to-Agent Communication
+# === Collaboration System (v0.8.0) ===
 try:
     from .collaboration import (
         CollaborationService,
@@ -355,19 +273,16 @@ try:
         GlobalCallGraph,
     )
     __all__ += [
-        "CollaborationService",
-        "CollaborationRequest",
-        "CollaborationResult",
-        "CollaborationStatus",
-        "AgentCapability",
-        "GlobalCallGraph",
+        "CollaborationService", "CollaborationRequest",
+        "CollaborationResult", "CollaborationStatus",
+        "AgentCapability", "GlobalCallGraph",
     ]
-except ImportError:
-    pass
+except ImportError as e:
+    _logger.debug("Collaboration system not available: %s", e)
 
-# 개발 모드에서 SDK 정보 출력
-if os.getenv("LOGOSAI_SHOW_INFO", "").lower() == "true":
+# Show SDK info only when explicitly requested
+if _os.getenv("LOGOSAI_SHOW_INFO", "").lower() == "true":
     try:
         sdk_info()
-    except:
-        pass 
+    except Exception:
+        pass

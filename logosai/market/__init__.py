@@ -331,7 +331,7 @@ class AgentMarketTools:
         for instance_key, instance in self._instances.items():
             try:
                 await self.market.release_agent(instance.id)
-            except:
+            except Exception:
                 pass
         
         self._instances.clear()

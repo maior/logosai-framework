@@ -214,7 +214,7 @@ class LLMBasedSelfAssessment:
                 if confidence > 1:  # 퍼센트로 입력된 경우
                     confidence /= 100
                 result["confidence_score"] = confidence
-            except:
+            except (ValueError, IndexError):
                 pass
         
         return result
@@ -398,10 +398,10 @@ if __name__ == "__main__":
         ]
         
         for query in test_queries:
-            print(f"\n쿼리: {query}")
+            logger.info(f"\n쿼리: {query}")
             result = await assessment.assess_request_compatibility(query)
-            print(f"결과: {result.can_handle}, 신뢰도: {result.confidence_score:.2f}, 수준: {result.capability_level.value}")
-            print(f"이유: {', '.join(result.reasoning[:2])}")
+            logger.info(f"결과: {result.can_handle}, 신뢰도: {result.confidence_score:.2f}, 수준: {result.capability_level.value}")
+            logger.info(f"이유: {', '.join(result.reasoning[:2])}")
     
     # 테스트 실행
     # asyncio.run(test_llm_self_assessment())

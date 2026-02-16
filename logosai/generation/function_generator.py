@@ -51,7 +51,7 @@ class FunctionGenerator:
         Args:
             use_type_hints: Whether to include type hints in generated code
             use_llm: Whether to use LLM for parameter/logic inference
-            llm_model: LLM model name (e.g., "gemini-2.0-flash", "gemini-2.5-flash-lite")
+            llm_model: LLM model name (e.g., "gemini-2.5-flash", "gemini-2.5-flash-lite")
             llm_provider: LLM provider (google, openai, anthropic)
         """
         self.use_type_hints = use_type_hints

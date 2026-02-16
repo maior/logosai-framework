@@ -531,15 +531,15 @@ if __name__ == "__main__":
         
         # 예측 테스트
         predictions = tracker.predict_best_agents("100 + 200 계산해주세요")
-        print(f"계산 쿼리 예측 결과: {predictions}")
-        
+        logger.info(f"계산 쿼리 예측 결과: {predictions}")
+
         # 인사이트 조회
         insights = tracker.get_system_insights()
-        print(f"시스템 인사이트: {insights}")
-        
+        logger.info(f"시스템 인사이트: {insights}")
+
         # 개선 제안
         suggestions = tracker.suggest_improvements()
-        print(f"개선 제안: {suggestions}")
+        logger.info(f"개선 제안: {suggestions}")
     
     # 테스트 실행
     test_performance_tracker()

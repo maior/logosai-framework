@@ -1,8 +1,8 @@
 """
-Global Call Graph — 에이전트 간 호출 추적 및 루프 방지
+Global Call Graph — Inter-agent call tracking and loop prevention
 
-싱글톤으로 동작하여 모든 에이전트 간 호출을 중앙에서 추적.
-순환 호출 탐지, 최대 깊이 제한, 타임아웃 체이닝을 담당.
+Operates as singleton to centrally track all inter-agent calls.
+Handles circular call detection, maximum depth limits, and timeout chaining.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CallRecord:
-    """개별 호출 기록"""
+    """Individual call record"""
     request_id: str
     caller_id: str
     callee_id: str
@@ -30,12 +30,12 @@ class CallRecord:
 
 class GlobalCallGraph:
     """
-    글로벌 콜 그래프 — 싱글톤
+    Global Call Graph — Singleton
 
-    모든 에이전트 간 호출을 추적하여:
-    1. 순환 호출 탐지 (A→B→A)
-    2. 최대 깊이 제한 (기본 5)
-    3. 활성 호출 추적 (동시성 관리)
+    Tracks all inter-agent calls to:
+    1. Detect circular calls (A→B→A)
+    2. Enforce maximum depth limit (default 5)
+    3. Track active calls (concurrency management)
     """
 
     _instance: Optional[GlobalCallGraph] = None
@@ -51,7 +51,7 @@ class GlobalCallGraph:
         if self._initialized:
             return
         self._active_calls: Dict[str, CallRecord] = {}  # request_id → CallRecord
-        self._agent_active_chains: Dict[str, Set[str]] = {}  # agent_id → {request_ids 참여 중}
+        self._agent_active_chains: Dict[str, Set[str]] = {}  # agent_id → {participating request_ids}
         self._max_depth: int = 5
         self._max_concurrent_chains: int = 20
         self._initialized = True
@@ -62,7 +62,7 @@ class GlobalCallGraph:
 
     @classmethod
     def reset(cls):
-        """테스트용: 싱글톤 초기화"""
+        """For testing: reset singleton"""
         if cls._instance is not None:
             cls._instance._active_calls.clear()
             cls._instance._agent_active_chains.clear()
@@ -78,31 +78,31 @@ class GlobalCallGraph:
         depth: int
     ) -> Tuple[bool, Optional[str]]:
         """
-        호출 가능 여부 검증.
+        Verify if call is allowed.
 
         Returns:
             (can_call, error_reason)
         """
-        # 1. 깊이 제한 체크
+        # 1. Check depth limit
         if depth >= self._max_depth:
             reason = f"Max depth {self._max_depth} exceeded (current: {depth})"
             logger.warning(f"[CallGraph] DEPTH_EXCEEDED: {caller_id}→{callee_id} | {reason}")
             return False, reason
 
-        # 2. 순환 호출 체크: callee가 이미 call_chain에 있으면 루프
+        # 2. Check circular call: if callee is already in call_chain, it's a loop
         if callee_id in call_chain:
             chain_str = " → ".join(call_chain + [callee_id])
             reason = f"Loop detected: {chain_str}"
             logger.warning(f"[CallGraph] LOOP_DETECTED: {reason}")
             return False, reason
 
-        # 3. 자기 자신 호출 체크
+        # 3. Check self-call
         if caller_id == callee_id:
             reason = f"Self-call detected: {caller_id}→{callee_id}"
             logger.warning(f"[CallGraph] SELF_CALL: {reason}")
             return False, reason
 
-        # 4. 동시 체인 수 제한
+        # 4. Limit concurrent chains
         if len(self._active_calls) >= self._max_concurrent_chains:
             reason = f"Too many concurrent chains ({len(self._active_calls)}/{self._max_concurrent_chains})"
             logger.warning(f"[CallGraph] CONCURRENT_LIMIT: {reason}")
@@ -118,7 +118,7 @@ class GlobalCallGraph:
         depth: int,
         parent_request_id: Optional[str] = None
     ):
-        """호출 진입 기록"""
+        """Record call entry"""
         record = CallRecord(
             request_id=request_id,
             caller_id=caller_id,
@@ -128,7 +128,7 @@ class GlobalCallGraph:
         )
         self._active_calls[request_id] = record
 
-        # 에이전트별 활성 체인 추적
+        # Track active chains per agent
         for agent_id in (caller_id, callee_id):
             if agent_id not in self._agent_active_chains:
                 self._agent_active_chains[agent_id] = set()
@@ -140,10 +140,10 @@ class GlobalCallGraph:
         )
 
     def exit_call(self, request_id: str):
-        """호출 종료 기록"""
+        """Record call exit"""
         record = self._active_calls.pop(request_id, None)
         if record:
-            # 에이전트별 활성 체인에서 제거
+            # Remove from active chains per agent
             for agent_id in (record.caller_id, record.callee_id):
                 if agent_id in self._agent_active_chains:
                     self._agent_active_chains[agent_id].discard(request_id)
@@ -167,7 +167,7 @@ class GlobalCallGraph:
         parent_request_id: Optional[str] = None
     ):
         """
-        컨텍스트 매니저로 호출 추적.
+        Track call via context manager.
 
         Usage:
             async with call_graph.track_call(...) as can_proceed:

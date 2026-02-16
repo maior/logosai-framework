@@ -6,9 +6,7 @@ Run:
 """
 
 import asyncio
-from logosai.agent import LogosAIAgent
-from logosai.config import AgentConfig
-from logosai.types import AgentType, AgentResponse, AgentResponseType
+from logosai import LogosAIAgent, AgentConfig, AgentType, AgentResponse, AgentResponseType
 
 
 class HelloAgent(LogosAIAgent):

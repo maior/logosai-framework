@@ -174,7 +174,7 @@ def print_colored(text: str, color: str = None, no_color: bool = False):
             import ctypes
             kernel32 = ctypes.windll.kernel32
             kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
-        except:
+        except (AttributeError, OSError):
             # 색상을 사용할 수 없는 경우 일반 텍스트 출력
             print(text)
             return

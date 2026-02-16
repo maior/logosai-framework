@@ -401,9 +401,10 @@ class SimpleDebateSystem:
 
     def _log(self, message: str) -> None:
         """토론 과정 로깅"""
+        from loguru import logger
         timestamp = datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {message}"
-        print(entry)
+        logger.info(entry)
         self.transcript.append({
             "timestamp": timestamp,
             "message": message

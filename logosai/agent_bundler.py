@@ -484,7 +484,7 @@ class LLMIntegrationAgent(LogosAIAgent):
                 content=json_content,
                 message=json_content.get("message", "")
             )
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError):
             # 일반 텍스트 응답
             return AgentResponse(
                 type=AgentResponseType.TEXT,
@@ -516,7 +516,7 @@ class LLMIntegrationAgent(LogosAIAgent):
                 content=json_content,
                 message=json_content.get("message", "")
             )
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError):
             # 일반 텍스트 응답
             return AgentResponse(
                 type=AgentResponseType.TEXT,
@@ -549,7 +549,7 @@ class LLMIntegrationAgent(LogosAIAgent):
                 content=json_content,
                 message=json_content.get("message", "")
             )
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError):
             # 일반 텍스트 응답
             return AgentResponse(
                 type=AgentResponseType.TEXT,

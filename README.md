@@ -1,6 +1,6 @@
 # LogosAI
 
-[![Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](https://github.com/maior/logosai-framework)
+[![Version](https://img.shields.io/badge/version-0.8.1-blue.svg)](https://github.com/maior/logosai-framework)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -31,9 +31,7 @@ pip install -e .
 
 ```python
 import asyncio
-from logosai.agent import LogosAIAgent
-from logosai.config import AgentConfig
-from logosai.types import AgentType, AgentResponse, AgentResponseType
+from logosai import LogosAIAgent, AgentConfig, AgentType, AgentResponse, AgentResponseType
 
 
 class MyAgent(LogosAIAgent):
@@ -65,6 +63,14 @@ if __name__ == "__main__":
 ```
 
 See the [samples/](samples/) directory for more examples.
+
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | Complete guide to creating intelligent agents with LLM, collaboration, debate, and evolution |
+| [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | How to build and deploy ACP servers that host and orchestrate agents |
+| [Samples](samples/) | Minimal working examples (hello agent, calculator, ACP server) |
 
 ## Features
 

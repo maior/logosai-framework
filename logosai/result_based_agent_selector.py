@@ -513,14 +513,14 @@ if __name__ == "__main__":
             context={"test": True}
         )
         
-        print(f"선택된 에이전트: {result.selected_agent_id}")
-        print(f"품질 점수: {result.quality_score.overall_score:.2f}")
-        print(f"선택 방법: {result.selection_method}")
-        print(f"시도 횟수: {result.trials_attempted}")
-        
+        logger.info(f"선택된 에이전트: {result.selected_agent_id}")
+        logger.info(f"품질 점수: {result.quality_score.overall_score:.2f}")
+        logger.info(f"선택 방법: {result.selection_method}")
+        logger.info(f"시도 횟수: {result.trials_attempted}")
+
         # 통계 조회
         stats = selector.get_selection_stats()
-        print(f"선택 통계: {stats}")
+        logger.info(f"선택 통계: {stats}")
     
     # 테스트 실행
     # asyncio.run(test_result_based_selector())

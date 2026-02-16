@@ -233,7 +233,7 @@ class APIClient:
                     # JSON 응답 시도
                     try:
                         return await response.json()
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         # JSON이 아닌 경우 텍스트 반환
                         return {"text": await response.text()}
                         

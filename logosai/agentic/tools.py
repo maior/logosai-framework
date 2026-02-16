@@ -197,7 +197,7 @@ class ToolRegistry:
                 if name not in allowed_names:
                     raise NameError(f"Use of {name} not allowed")
             return eval(code, {"__builtins__": {}}, allowed_names)
-        except:
+        except Exception:
             # math 모듈이 없는 경우 기본 eval
             return eval(expression, {"__builtins__": {}})
     

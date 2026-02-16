@@ -1,7 +1,7 @@
 """
-에이전트 설정 관리 모듈
+Agent Configuration Management Module
 
-이 모듈은 LogosAI 에이전트의 설정을 관리하는 클래스와 유틸리티를 제공합니다.
+This module provides classes and utilities for managing LogosAI agent configurations.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -9,9 +9,9 @@ from ..agent_types import AgentType
 
 
 class AgentConfig:
-    """에이전트 설정 클래스
-    
-    LogosAI 에이전트의 설정을 관리하는 클래스입니다.
+    """Agent Configuration Class
+
+    Class for managing LogosAI agent configurations.
     """
     
     def __init__(
@@ -23,21 +23,21 @@ class AgentConfig:
         api_config: Optional[Dict[str, Any]] = None,
         llm_config: Optional[Dict[str, Any]] = None
     ):
-        """에이전트 설정 초기화
-        
+        """Initialize agent configuration
+
         Args:
-            name: 에이전트 이름
-            agent_type: 에이전트 유형
-            description: 에이전트 설명
-            config: 에이전트 일반 설정
-            api_config: API 연결 설정
-            llm_config: LLM 모델 설정
+            name: Agent name
+            agent_type: Agent type
+            description: Agent description
+            config: General agent configuration
+            api_config: API connection settings
+            llm_config: LLM model settings
         """
         self.name = name
-        
-        # 에이전트 유형 설정  
+
+        # Set agent type
         if isinstance(agent_type, str):
-            # 문자열을 AgentType enum으로 변환
+            # Convert string to AgentType enum
             try:
                 self.agent_type = AgentType(agent_type)
             except ValueError:
@@ -51,12 +51,12 @@ class AgentConfig:
         self.llm_config = llm_config or {}
     
     def update(self, **kwargs) -> 'AgentConfig':
-        """설정 업데이트
-        
-        키워드 인자로 전달된 값으로 설정을 업데이트합니다.
-            
+        """Update configuration
+
+        Updates configuration with values passed as keyword arguments.
+
         Returns:
-            업데이트된 설정 객체 (self)
+            Updated configuration object (self)
         """
         for key, value in kwargs.items():
             if key == 'name':
@@ -81,10 +81,10 @@ class AgentConfig:
         return self
     
     def to_dict(self) -> Dict[str, Any]:
-        """설정을 딕셔너리로 변환
-        
+        """Convert configuration to dictionary
+
         Returns:
-            설정 값을 담은 딕셔너리
+            Dictionary containing configuration values
         """
         return {
             "name": self.name,
@@ -97,13 +97,13 @@ class AgentConfig:
     
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'AgentConfig':
-        """딕셔너리에서 설정 객체 생성
-        
+        """Create configuration object from dictionary
+
         Args:
-            config_dict: 설정 값을 담은 딕셔너리
-            
+            config_dict: Dictionary containing configuration values
+
         Returns:
-            생성된 AgentConfig 객체
+            Created AgentConfig object
         """
         return cls(
             name=config_dict.get("name", "Unknown Agent"),
@@ -115,10 +115,10 @@ class AgentConfig:
         )
     
     def __str__(self) -> str:
-        """문자열 표현 반환"""
+        """Return string representation"""
         return f"AgentConfig(name='{self.name}', type={self.agent_type})"
-    
+
     def __repr__(self) -> str:
-        """개발자용 표현 반환"""
+        """Return developer representation"""
         return (f"AgentConfig(name='{self.name}', type={self.agent_type}, "
                 f"description='{self.description[:20]}...' if len(self.description) > 20 else self.description)") 

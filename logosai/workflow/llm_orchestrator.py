@@ -973,9 +973,9 @@ class WorkflowExecutor:
 
 async def test_llm_orchestrator():
     """LLM Workflow Orchestrator 테스트"""
-    print("=" * 70)
-    print("🧠 LLM Workflow Orchestrator 테스트")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("🧠 LLM Workflow Orchestrator 테스트")
+    logger.info("=" * 70)
 
     # 테스트 에이전트 목록
     test_agents = [
@@ -1047,36 +1047,36 @@ async def test_llm_orchestrator():
         "오늘 서울 날씨 어때?",
     ]
 
-    print("\n📋 워크플로우 계획 생성 테스트")
-    print("-" * 70)
+    logger.info("\n📋 워크플로우 계획 생성 테스트")
+    logger.info("-" * 70)
 
     for query in test_queries:
-        print(f"\n🔍 Query: {query[:50]}...")
-        print("-" * 50)
+        logger.info(f"\n🔍 Query: {query[:50]}...")
+        logger.info("-" * 50)
 
         plan = await orchestrator.create_workflow_plan(query, test_agents)
 
-        print(f"   📊 복잡도: {plan.complexity.value} ({plan.complexity_score:.2f})")
-        print(f"   🎯 의도: {plan.query_intent.value}")
-        print(f"   ⚡ 실행 전략: {plan.execution_strategy.value}")
-        print(f"   🤖 에이전트 수: {plan.total_agents}")
+        logger.info(f"   📊 복잡도: {plan.complexity.value} ({plan.complexity_score:.2f})")
+        logger.info(f"   🎯 의도: {plan.query_intent.value}")
+        logger.info(f"   ⚡ 실행 전략: {plan.execution_strategy.value}")
+        logger.info(f"   🤖 에이전트 수: {plan.total_agents}")
 
         if plan.agent_assignments:
-            print(f"   📋 할당된 에이전트:")
+            logger.info(f"   📋 할당된 에이전트:")
             for assignment in plan.agent_assignments:
-                print(f"      - {assignment.agent_id}: {assignment.task_description[:40]}...")
+                logger.info(f"      - {assignment.agent_id}: {assignment.task_description[:40]}...")
 
-        print(f"   🔗 통합 전략: {plan.merge_config.strategy.value}")
-        print(f"   ⏱️ 분석 시간: {plan.analysis_time:.2f}s")
-        print(f"   💬 Reasoning: {plan.reasoning[:80]}...")
+        logger.info(f"   🔗 통합 전략: {plan.merge_config.strategy.value}")
+        logger.info(f"   ⏱️ 분석 시간: {plan.analysis_time:.2f}s")
+        logger.info(f"   💬 Reasoning: {plan.reasoning[:80]}...")
 
     # 통계 출력
-    print("\n" + "=" * 70)
-    print("📊 오케스트레이터 통계")
-    print("-" * 70)
+    logger.info("\n" + "=" * 70)
+    logger.info("📊 오케스트레이터 통계")
+    logger.info("-" * 70)
     stats = orchestrator.get_stats()
     for key, value in stats.items():
-        print(f"   {key}: {value}")
+        logger.info(f"   {key}: {value}")
 
 
 if __name__ == "__main__":

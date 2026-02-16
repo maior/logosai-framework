@@ -88,7 +88,7 @@ class QueryAdapter:
 
     # LLM 설정
     DEFAULT_PROVIDER = "google"
-    DEFAULT_MODEL = "gemini-2.0-flash-lite"  # 빠른 모델 사용
+    DEFAULT_MODEL = "gemini-2.5-flash-lite"  # 빠른 모델 사용
 
     # 공통 패턴
     COMMON_PATTERNS = {
@@ -122,7 +122,7 @@ class QueryAdapter:
 
         Args:
             provider: LLM 프로바이더 (기본: google)
-            model: LLM 모델 (기본: gemini-2.0-flash-lite)
+            model: LLM 모델 (기본: gemini-2.5-flash-lite)
             temperature: LLM temperature (낮을수록 일관성 있음)
             cache_enabled: 캐시 활성화 여부
             max_cache_size: 최대 캐시 크기

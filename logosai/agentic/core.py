@@ -190,7 +190,7 @@ class AgenticCore:
             import json
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 # Fallback if JSON parsing fails
                 result = {
                     "understanding": response.content,
@@ -288,7 +288,7 @@ class AgenticCore:
             import json
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 # Fallback plan
                 result = {
                     "strategy": "Direct approach",
@@ -398,7 +398,7 @@ class AgenticCore:
             import json
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 result = {
                     "success": True,
                     "result": f"Executed {action.name}",
@@ -473,7 +473,7 @@ class AgenticCore:
             import json
             try:
                 result = json.loads(response.content)
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 result = {
                     "outcome": "Reflection completed",
                     "success": True,

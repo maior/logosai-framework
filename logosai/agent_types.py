@@ -1,5 +1,5 @@
 """
-LogosAI 에이전트 관련 타입 정의
+LogosAI agent-related type definitions
 """
 
 import os
@@ -9,7 +9,7 @@ from enum import Enum, auto
 from typing import Any, Dict, Optional, List, ClassVar, Set, Union, TypeVar, Type
 from dataclasses import dataclass, field
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from loguru import logger
 
 _cached_agent_types = None
@@ -17,93 +17,115 @@ _cached_agent_types = None
 JSON = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 
 def get_agent_types(config_path: str = None, json_data: JSON = None) -> Dict[str, Dict[str, Any]]:
-    """에이전트 정보를 로드 (캐시 적용)
-    
+    """Load agent information (with caching)
+
     Args:
-        config_path (str, optional): agents.json 파일의 경로. 기본값은 None이며, 이 경우 examples/configs/agents.json을 사용합니다.
-        json_data (JSON, optional): 직접 전달할 JSON 데이터. JSON 형식이어야 합니다.
-                                  단일 에이전트 정보 또는 여러 에이전트 정보('agents' 키)를 포함할 수 있습니다.
-    
+        config_path (str, optional): Path to agents.json file. Defaults to None, in which case examples/configs/agents.json is used.
+        json_data (JSON, optional): JSON data to pass directly. Must be in JSON format.
+                                  Can contain single agent info or multiple agent info (with 'agents' key).
+
     Returns:
-        Dict[str, Dict[str, Any]]: 에이전트 ID를 키로 하는 에이전트 정보 딕셔너리
+        Dict[str, Dict[str, Any]]: Dictionary of agent information keyed by agent ID
     """
     global _cached_agent_types
     
-    # json_data가 제공된 경우 먼저 처리
+    # Process json_data first if provided
     if json_data is not None:
         try:
             if isinstance(json_data, str):
                 config = json.loads(json_data)
             else:
                 config = json_data
-            
-            # json_data로부터 에이전트 정보 추출
+
+            # Extract agent information from json_data
             new_agents = {}
             if isinstance(config, dict):
                 if 'agents' in config:
                     new_agents = {agent['agent_id']: agent for agent in config.get('agents', [])}
                 elif 'agent_id' in config:
                     new_agents = {config['agent_id']: config}
-            
-            # 캐시가 없는 경우 새로운 데이터로 초기화
+
+            # Initialize with new data if cache is empty
             if _cached_agent_types is None:
                 _cached_agent_types = new_agents
                 return _cached_agent_types
-            
-            # 캐시가 있는 경우 새로운 데이터로 업데이트
+
+            # Update cache with new data if cache exists
             _cached_agent_types.update(new_agents)
             return _cached_agent_types
-                
+
         except Exception as e:
-            logger.error(f"JSON 데이터 처리 중 오류: {str(e)}")
+            logger.error(f"Error processing JSON data: {str(e)}")
             if _cached_agent_types is None:
                 _cached_agent_types = {}
-    
-    # 캐시가 없고 config_path가 제공되지 않은 경우 기본 경로 사용
+
+    # Use default path if cache is empty and config_path is not provided
     if _cached_agent_types is None:
         try:
             if config_path is None:
                 package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 config_path = os.path.join(package_dir, "examples", "configs", "agents.json")
-            
-            # 파일에서 에이전트 정보 로드
+
+            # Load agent information from file
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     _cached_agent_types = {agent['agent_id']: agent for agent in config.get('agents', [])}
             else:
-                logger.warning(f"에이전트 설정 파일을 찾을 수 없음: {config_path}")
+                logger.warning(f"Agent config file not found: {config_path}")
                 _cached_agent_types = {}
-                
+
         except Exception as e:
-            logger.error(f"에이전트 설정 파일 로드 중 오류: {str(e)}")
+            logger.error(f"Error loading agent config file: {str(e)}")
             _cached_agent_types = {}
     
     return _cached_agent_types
 
 
 class AgentType(str, Enum):
-    """에이전트 유형"""
-    TASK_CLASSIFIER = "task_classifier"  # 작업 분류 에이전트
-    MANAGED_SOURCE = "managed_source"    # 관리형 소스 에이전트
-    SELF_HOSTED = "self_hosted"         # 자체 호스팅 에이전트
-    LLM_INTEGRATION = "llm_integration"  # LLM 통합 에이전트
-    UNKNOWN = "unknown"                 # 알 수 없는 유형
-    GENERAL = "general"                 # 일반 대화형 에이전트
-    SEARCH = "search"                   # 검색 에이전트
-    CUSTOM = "custom"                   # 사용자 정의 에이전트
+    """Agent type enumeration"""
+    TASK_CLASSIFIER = "task_classifier"  # Task classification agent
+    MANAGED_SOURCE = "managed_source"    # Managed source agent
+    SELF_HOSTED = "self_hosted"         # Self-hosted agent
+    LLM_INTEGRATION = "llm_integration"  # LLM integration agent
+    UNKNOWN = "unknown"                 # Unknown type
+    GENERAL = "general"                 # General conversational agent
+    SEARCH = "search"                   # Search agent
+    CUSTOM = "custom"                   # Custom agent
 
 class AgentResponseType(str, Enum):
-    """에이전트 응답 유형"""
-    SUCCESS = "SUCCESS"  # 성공
-    ERROR = "ERROR"     # 오류
-    TEXT = "TEXT"       # 텍스트 응답
-    HTML = "HTML"       # HTML 응답
-    JSON = "JSON"       # JSON 응답
+    """Agent response type enumeration."""
+    SUCCESS = "SUCCESS"
+    ERROR = "ERROR"
+    TEXT = "TEXT"
+    HTML = "HTML"
+    JSON = "JSON"
+
+    @classmethod
+    def from_string(cls, value: str) -> 'AgentResponseType':
+        """Convert a string to AgentResponseType (case-insensitive).
+
+        Args:
+            value: String representation of the response type.
+
+        Returns:
+            Matching AgentResponseType member, defaults to TEXT.
+        """
+        if not isinstance(value, str):
+            return cls.TEXT
+        upper = value.upper()
+        for member in cls:
+            if member.value == upper or member.name == upper:
+                return member
+        # Handle lowercase legacy values (e.g. "success" from types.py)
+        for member in cls:
+            if member.value.lower() == value.lower():
+                return member
+        return cls.TEXT
 
 
 class TaskType(str):
-    """작업 유형"""
+    """Task type enumeration"""
     _values: Set[str] = None
     
     def __new__(cls, value):
@@ -116,13 +138,16 @@ class TaskType(str):
 
 
 class ClassificationResult(BaseModel):
-    """분류 결과를 위한 Pydantic 모델"""
-    task_type: str = Field(description="작업의 유형")
-    confidence: float = Field(description="분류 결과의 신뢰도 (0-1)", ge=0, le=1)
-    reasoning: str = Field(description="작업 유형 선택의 근거")
-    requires_analysis: bool = Field(description="추가 분석이 필요한지 여부")
+    """Pydantic model for classification results"""
+    task_type: str = Field(description="Type of task")
+    confidence: float = Field(description="Confidence of classification result (0-1)", ge=0, le=1)
+    reasoning: str = Field(description="Reasoning for task type selection")
+    requires_analysis: bool = Field(description="Whether additional analysis is required")
 
-    @validator('task_type', pre=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @field_validator('task_type', mode='before')
+    @classmethod
     def validate_task_type(cls, v):
         if isinstance(v, str):
             v = v.lower()
@@ -132,20 +157,17 @@ class ClassificationResult(BaseModel):
             return v
         return 'unknown'
 
-    class Config:
-        arbitrary_types_allowed = True
-
 
 class AgentResponse:
-    """에이전트 응답"""
+    """Agent response class"""
     def __init__(self, type: AgentResponseType, content: Dict[str, Any], metadata: Dict[str, Any] = None, message: str = None):
         self.type = type
         self.content = content
         self.metadata = metadata or {}
-        self.message = message or ""  # 응답 요약 또는 주요 메시지
+        self.message = message or ""  # Response summary or main message
 
     def to_dict(self) -> Dict[str, Any]:
-        """응답을 딕셔너리로 변환"""
+        """Convert response to dictionary"""
         return {
             "type": str(self.type),
             "content": self.content,
@@ -155,17 +177,24 @@ class AgentResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AgentResponse':
-        """딕셔너리에서 응답 객체 생성"""
+        """Create an AgentResponse from a dictionary.
+
+        Args:
+            data: Dictionary with 'type', 'content', and optional 'metadata'/'message'.
+
+        Returns:
+            AgentResponse instance.
+        """
         return cls(
-            type=AgentResponseType(data["type"]),
-            content=data["content"],
+            type=AgentResponseType.from_string(data.get("type", "TEXT")),
+            content=data.get("content", {}),
             metadata=data.get("metadata", {}),
             message=data.get("message", "")
         )
 
     @classmethod
     def error(cls, message: str, content: Dict[str, Any] = None) -> 'AgentResponse':
-        """오류 응답 생성"""
+        """Create error response"""
         return cls(
             type=AgentResponseType.ERROR,
             content=content or {"error": message},
@@ -175,7 +204,7 @@ class AgentResponse:
 
     @classmethod
     def success(cls, message: str = "", content: Dict[str, Any] = None) -> 'AgentResponse':
-        """성공 응답 생성"""
+        """Create success response"""
         return cls(
             type=AgentResponseType.SUCCESS,
             content=content or {"message": message},

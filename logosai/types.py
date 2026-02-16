@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Dict, Optional, List, ClassVar, Set, Union, Protocol, Callable, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # 로거 설정
@@ -520,7 +520,10 @@ class ClassificationResult(BaseModel):
     agent_not_found_message: Optional[str] = Field(default=None, description="적절한 에이전트를 찾지 못했을 때 사용자에게 제공할 안내 메시지")
     llm_answer: Optional[str] = Field(default=None, description="적절한 에이전트를 찾지 못했을 때 제공할 LLM 기반 답변")
 
-    @validator('task_type', pre=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @field_validator('task_type', mode='before')
+    @classmethod
     def validate_task_type(cls, v):
         if isinstance(v, str):
             v = v.lower()
@@ -529,9 +532,6 @@ class ClassificationResult(BaseModel):
                 return v
             return "llm_search"  # 기본값으로 llm_search 반환
         return "llm_search"
-
-    class Config:
-        arbitrary_types_allowed = True
 
 
 # Message Bus 관련 타입 정의

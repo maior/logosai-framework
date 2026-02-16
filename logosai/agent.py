@@ -1,7 +1,7 @@
 """
-LogosAI 에이전트 구현
+LogosAI Agent Implementation
 
-이 모듈은 LogosAI 에이전트의 기본 클래스와 유틸리티 함수를 제공합니다.
+This module provides the base classes and utility functions for LogosAI agents.
 """
 
 from __future__ import annotations
@@ -25,13 +25,13 @@ except ImportError:
 from .agent_self_assessment import AgentSelfAssessment, SelfAssessmentResult
 from .dialogue_protocol import SimpleDialogueProtocol, DialogueCapability, DialogueMessage, DialogueTurn
 
-# 쿼리 최적화 시스템은 나중에 import (순환 참조 방지)
+# Query optimization system is imported later (to avoid circular references)
 optimize_query_for_agent = None
 check_agent_suitability = None
 OptimizerAgentType = None
 
 def _lazy_import_query_optimizer():
-    """쿼리 최적화 모듈을 필요할 때 import"""
+    """Import query optimization module when needed"""
     global optimize_query_for_agent, check_agent_suitability, OptimizerAgentType
     if optimize_query_for_agent is None:
         try:
@@ -40,71 +40,71 @@ def _lazy_import_query_optimizer():
             check_agent_suitability = _check
             OptimizerAgentType = _AgentType
         except ImportError:
-            logger.warning("쿼리 최적화 시스템을 로드할 수 없습니다")
+            logger.warning("Failed to load query optimization system")
 
-# 로깅 설정
+# Logging setup
 logger = logging.getLogger(__name__)
 
 class LogosAIAgent:
-    """LogosAI 에이전트 기본 클래스 - 조건부 Agentic AI 지원"""
-    
+    """LogosAI Agent Base Class - Conditional Agentic AI Support"""
+
     def __init__(self, config: AgentConfig):
-        """에이전트 초기화
-        
+        """Initialize agent
+
         Args:
-            config: 에이전트 설정
+            config: Agent configuration
         """
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.initialized = False
-        
-        # 에이전트 ID와 이름 설정
+
+        # Set agent ID and name
         self.id = getattr(config, 'agent_id', self.__class__.__name__)
         self.name = getattr(config, 'name', self.__class__.__name__)
-        
-        # Agentic AI 기능 활성화 여부 확인
+
+        # Check if Agentic AI features should be enabled
         self._agentic_enabled = self._should_enable_agentic()
-        
-        # Agentic AI 모듈 초기화 (조건부)
+
+        # Initialize Agentic AI modules (conditional)
         self._agentic_core = None
         self._agentic_reasoning = None
         self._agentic_memory = None
         self._agentic_learning = None
         self._agentic_tools = None
-        
+
         if self._agentic_enabled:
             self._init_agentic_features()
-        
-        # 자기평가 시스템 초기화
+
+        # Initialize self-assessment system
         self._self_assessment = None
         self._init_self_assessment()
-        
-        # 대화 프로토콜 초기화
+
+        # Initialize dialogue protocol
         self._dialogue_protocol = None
         self._init_dialogue_protocol()
 
-        # 에이전트 간 협업 서비스 (ACP 서버가 런타임에 주입)
+        # Inter-agent collaboration service (injected by ACP server at runtime)
         self._collaboration_service: Optional[CollaborationService] = None
     
     def _should_enable_agentic(self) -> bool:
-        """Agentic AI 기능 활성화 여부 결정"""
+        """Determine whether to enable Agentic AI features"""
         if not hasattr(self.config, 'config') or not isinstance(self.config.config, dict):
             return False
-        
-        # 명시적 enable 플래그 확인
+
+        # Check explicit enable flag
         if self.config.config.get('enable_agentic'):
             return True
-        
-        # agentic_config 존재 여부 확인
+
+        # Check if agentic_config exists
         if 'agentic_config' in self.config.config:
             return True
-        
+
         return False
-    
+
     def _init_agentic_features(self):
-        """Agentic AI 기능 초기화"""
+        """Initialize Agentic AI features"""
         try:
-            # Agentic 모듈들을 동적으로 import
+            # Dynamically import Agentic modules
             from .agentic import (
                 AgenticCore,
                 AgenticReasoning,
@@ -112,35 +112,35 @@ class LogosAIAgent:
                 AgenticMemory,
                 AgenticLearning
             )
-            
+
             agentic_config = self.config.config.get('agentic_config', {})
-            
-            # Core 모듈 초기화
+
+            # Initialize Core module
             self._agentic_core = AgenticCore(
                 agent_name=self.name,
                 config=agentic_config
             )
-            
-            # Reasoning 모듈 초기화 (reasoning_type이 있을 때만)
+
+            # Initialize Reasoning module (only if reasoning_type exists)
             if agentic_config.get('reasoning_type'):
                 self._agentic_reasoning = AgenticReasoning()
-            
-            # Memory 모듈 초기화 (memory_capacity > 0일 때만)
+
+            # Initialize Memory module (only if memory_capacity > 0)
             memory_capacity = agentic_config.get('memory_capacity', 0)
             if memory_capacity > 0:
                 self._agentic_memory = AgenticMemory(capacity=memory_capacity)
-            
-            # Learning 모듈 초기화 (learning_rate > 0일 때만)
+
+            # Initialize Learning module (only if learning_rate > 0)
             learning_rate = agentic_config.get('learning_rate', 0)
             if learning_rate > 0:
                 self._agentic_learning = AgenticLearning(learning_rate=learning_rate)
-            
-            # Tools 모듈 초기화 (tools_enabled일 때만)
+
+            # Initialize Tools module (only if tools_enabled)
             if agentic_config.get('tools_enabled'):
                 self._agentic_tools = AgenticTools()
-            
+
             logger.info(f"✅ Agentic AI features enabled for {self.name}")
-            
+
         except ImportError as e:
             logger.warning(f"Agentic AI modules not available: {e}")
             self._agentic_enabled = False
@@ -149,55 +149,55 @@ class LogosAIAgent:
             self._agentic_enabled = False
     
     async def initialize(self) -> bool:
-        """에이전트 초기화
-        
+        """Initialize agent
+
         Returns:
-            bool: 초기화 성공 여부
+            bool: Whether initialization was successful
         """
         self.initialized = True
         return True
-    
+
     async def process(self, query: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
-        """쿼리 처리
+        """Process query
 
         Args:
-            query: 처리할 쿼리
-            context: 처리 컨텍스트
+            query: Query to process
+            context: Processing context
 
         Returns:
-            AgentResponse: 처리 결과
+            AgentResponse: Processing result
         """
         if not self.initialized:
             await self.initialize()
 
-        raise NotImplementedError("process 메서드를 구현해야 합니다.")
+        raise NotImplementedError("process method must be implemented.")
 
     async def process_stream(self, query: str, context: Optional[Dict[str, Any]] = None):
-        """스트리밍 쿼리 처리 - AsyncGenerator로 중간 결과 반환
+        """Streaming query processing - Returns intermediate results via AsyncGenerator
 
         Args:
-            query: 처리할 쿼리
-            context: 처리 컨텍스트
+            query: Query to process
+            context: Processing context
 
         Yields:
-            Dict[str, Any]: 스트리밍 이벤트
-                - type: 이벤트 타입 (start, progress, chunk, complete, error)
-                - data: 이벤트 데이터
-                - timestamp: 이벤트 시간
+            Dict[str, Any]: Streaming event
+                - type: Event type (start, progress, chunk, complete, error)
+                - data: Event data
+                - timestamp: Event timestamp
 
         Example:
             async for event in agent.process_stream("query"):
                 if event["type"] == "chunk":
-                    print(event["data"]["content"])
+                    logger.info(event["data"]["content"])
                 elif event["type"] == "complete":
-                    print("Done:", event["data"]["result"])
+                    logger.info("Done:", event["data"]["result"])
         """
         import time
 
         if not self.initialized:
             await self.initialize()
 
-        # 스트리밍 시작 이벤트
+        # Streaming start event
         yield {
             "type": "start",
             "data": {
@@ -209,20 +209,20 @@ class LogosAIAgent:
         }
 
         try:
-            # 진행 상황 이벤트
+            # Progress event
             yield {
                 "type": "progress",
                 "data": {
                     "stage": "processing",
-                    "message": f"{self.name}이(가) 쿼리를 처리 중입니다..."
+                    "message": f"{self.name} is processing the query..."
                 },
                 "timestamp": time.time()
             }
 
-            # 실제 처리 실행 (하위 클래스에서 오버라이드 가능)
+            # Execute actual processing (can be overridden in subclasses)
             result = await self.process(query, context)
 
-            # 결과를 청크로 분할하여 전송 (긴 응답의 경우)
+            # Split result into chunks for transmission (for long responses)
             if result.type == AgentResponseType.SUCCESS:
                 content = result.content
                 if isinstance(content, dict):
@@ -230,8 +230,8 @@ class LogosAIAgent:
                 else:
                     answer = str(content)
 
-                # 긴 응답을 청크로 분할
-                chunk_size = 500  # 500자씩 분할
+                # Split long responses into chunks
+                chunk_size = 500  # Split into 500 character chunks
                 if len(answer) > chunk_size:
                     for i in range(0, len(answer), chunk_size):
                         chunk = answer[i:i + chunk_size]
@@ -244,7 +244,7 @@ class LogosAIAgent:
                             },
                             "timestamp": time.time()
                         }
-                        await asyncio.sleep(0.01)  # 약간의 딜레이로 스트리밍 효과
+                        await asyncio.sleep(0.01)  # Slight delay for streaming effect
                 else:
                     yield {
                         "type": "chunk",
@@ -256,7 +256,7 @@ class LogosAIAgent:
                         "timestamp": time.time()
                     }
 
-            # 완료 이벤트
+            # Complete event
             yield {
                 "type": "complete",
                 "data": {
@@ -269,17 +269,17 @@ class LogosAIAgent:
             }
 
         except NotImplementedError:
-            # process()가 구현되지 않은 경우
+            # If process() is not implemented
             yield {
                 "type": "error",
                 "data": {
-                    "error": "process 메서드가 구현되지 않았습니다",
+                    "error": "process method is not implemented",
                     "error_type": "NotImplementedError"
                 },
                 "timestamp": time.time()
             }
         except Exception as e:
-            # 에러 이벤트
+            # Error event
             yield {
                 "type": "error",
                 "data": {
@@ -290,84 +290,84 @@ class LogosAIAgent:
             }
 
     def _init_self_assessment(self):
-        """자기평가 시스템 초기화"""
+        """Initialize self-assessment system"""
         try:
-            # LLM 클라이언트 가져오기
+            # Get LLM client
             llm_client = getattr(self, 'llm_client', None)
-            
-            # AgentSelfAssessment 인스턴스 생성
+
+            # Create AgentSelfAssessment instance
             self._self_assessment = AgentSelfAssessment(
                 agent_id=getattr(self.config, 'agent_id', self.__class__.__name__),
                 agent_name=getattr(self.config, 'name', self.__class__.__name__),
                 llm_client=llm_client
             )
-            
-            # 에이전트 능력 설정 (하위 클래스에서 오버라이드 가능)
+
+            # Set agent capabilities (can be overridden in subclasses)
             capabilities = self.get_capabilities()
             if capabilities:
                 self._self_assessment.set_capabilities(capabilities)
-                
-            # 도메인 키워드 설정 (하위 클래스에서 오버라이드 가능)
+
+            # Set domain keywords (can be overridden in subclasses)
             domain_keywords = self.get_domain_keywords()
             if domain_keywords:
                 self._self_assessment.set_domain_keywords(domain_keywords)
-                
+
         except Exception as e:
-            logger.warning(f"자기평가 시스템 초기화 실패: {e}")
+            logger.warning(f"Failed to initialize self-assessment system: {e}")
             self._self_assessment = None
-    
+
     def get_capabilities(self) -> List[str]:
         """
-        에이전트 능력 목록 반환
-        하위 클래스에서 오버라이드하여 구체적인 능력을 정의
+        Return list of agent capabilities
+        Override in subclasses to define specific capabilities
         """
         return []
-    
+
     def get_domain_keywords(self) -> Dict[str, List[str]]:
         """
-        도메인별 키워드 반환
-        하위 클래스에서 오버라이드하여 구체적인 도메인 키워드를 정의
+        Return domain-specific keywords
+        Override in subclasses to define specific domain keywords
         """
         return {}
     
     def _init_dialogue_protocol(self):
-        """대화 프로토콜 초기화"""
+        """Initialize dialogue protocol"""
         try:
-            # 대화 프로토콜 인스턴스 생성
+            # Create dialogue protocol instance
             self._dialogue_protocol = SimpleDialogueProtocol(
                 agent_id=self.id,
                 agent_name=self.name,
-                auto_participate=True  # 기본적으로 모든 대화에 참여
+                auto_participate=True  # Participate in all dialogues by default
             )
-            
-            # 대화 프로토콜에 실제 처리 메서드 연결
+
+            # Connect actual processing methods to dialogue protocol
             self._dialogue_protocol.on_dialogue_invite = self._on_dialogue_invite
             self._dialogue_protocol.on_dialogue_message = self._on_dialogue_message
             self._dialogue_protocol.generate_dialogue_response = self._generate_dialogue_response
-            
-            # 대화 능력 설정
+
+            # Set dialogue capabilities
             self._dialogue_protocol.dialogue_capability = self.get_dialogue_capability()
-            
-            logger.info(f"대화 프로토콜 초기화 완료: {self.name}")
-            
+
+            logger.info(f"Dialogue protocol initialized: {self.name}")
+
         except Exception as e:
-            logger.warning(f"대화 프로토콜 초기화 실패: {e}")
+            logger.warning(f"Failed to initialize dialogue protocol: {e}")
             self._dialogue_protocol = None
-    
-    # ─── Agent Collaboration (에이전트 간 협업) ────────────────────────
+
+    # ─── Agent Collaboration ────────────────────────
 
     def set_collaboration_service(self, service: CollaborationService) -> None:
         """
-        협업 서비스 주입 — ACP 서버가 에이전트 로드 시 호출.
+        Inject collaboration service — called by ACP server when loading agent.
 
         Args:
-            service: CollaborationService 구현체
+            service: CollaborationService implementation
         """
         self._collaboration_service = service
 
     @property
     def can_collaborate(self) -> bool:
-        """협업 가능 여부"""
+        """Whether collaboration is possible"""
         return self._collaboration_service is not None
 
     async def invoke_agent(
@@ -378,21 +378,21 @@ class LogosAIAgent:
         timeout: Optional[float] = None,
     ) -> CollaborationResult:
         """
-        다른 에이전트를 호출하여 협업 수행.
+        Call another agent to perform collaboration.
 
-        사용 예시:
+        Usage example:
             result = await self.invoke_agent(
                 capability="document_processing",
-                query="이 PDF를 분석해줘: https://example.com/doc.pdf"
+                query="Analyze this PDF: https://example.com/doc.pdf"
             )
             if result.status == CollaborationStatus.COMPLETED:
                 pdf_content = result.data
 
         Args:
-            capability: 필요한 능력 (예: "translation", "document_processing")
-            query: 처리할 쿼리
-            context: 추가 컨텍스트
-            timeout: 타임아웃 (초). None이면 자동 점감 타임아웃
+            capability: Required capability (e.g., "translation", "document_processing")
+            query: Query to process
+            context: Additional context
+            timeout: Timeout (seconds). Auto-decremented timeout if None
 
         Returns:
             CollaborationResult
@@ -405,7 +405,7 @@ class LogosAIAgent:
                 error="No collaboration service available. Agent not running in ACP context.",
             )
 
-        # context에서 상위 요청 정보 추출 (체인 호출 시)
+        # Extract parent request info from context (for chain calls)
         parent_request = None
         if context and "_collaboration" in context:
             from .collaboration import CollaborationRequest
@@ -431,13 +431,13 @@ class LogosAIAgent:
         self, capability: str
     ) -> List[AgentCapability]:
         """
-        특정 능력을 가진 에이전트 목록 조회.
+        Query list of agents with specific capability.
 
         Args:
-            capability: 필요한 능력
+            capability: Required capability
 
         Returns:
-            매칭된 에이전트 목록. 서비스 미연결 시 빈 리스트.
+            List of matched agents. Empty list if service not connected.
         """
         if self._collaboration_service is None:
             return []
@@ -447,8 +447,8 @@ class LogosAIAgent:
 
     def get_dialogue_capability(self) -> DialogueCapability:
         """
-        에이전트의 대화 능력 정의
-        하위 클래스에서 오버라이드하여 구체적인 능력을 정의
+        Define agent's dialogue capabilities
+        Override in subclasses to define specific capabilities
         """
         return DialogueCapability(
             can_ask_questions=True,
@@ -458,56 +458,56 @@ class LogosAIAgent:
             can_clarify=True,
             dialogue_style="collaborative"
         )
-    
+
     async def _on_dialogue_invite(self, session_id: str, topic: str,
                                  participants: List[str], context: Dict[str, Any]) -> bool:
         """
-        대화 초대 처리
-        하위 클래스에서 오버라이드하여 선택적 참여 로직 구현 가능
+        Handle dialogue invitation
+        Can be overridden in subclasses to implement selective participation logic
         """
-        # 기본적으로 자신의 전문 분야와 관련있으면 참여
+        # By default, participate if related to area of expertise
         can_handle, confidence, _ = await self.can_handle(topic, context)
-        
+
         if confidence > 0.5:
-            logger.info(f"✅ {self.name}이(가) 대화 참여 결정: {topic} (신뢰도: {confidence:.2f})")
+            logger.info(f"✅ {self.name} decided to participate in dialogue: {topic} (confidence: {confidence:.2f})")
             return True
         else:
-            logger.info(f"❌ {self.name}이(가) 대화 참여 거절: {topic} (신뢰도: {confidence:.2f})")
+            logger.info(f"❌ {self.name} declined dialogue participation: {topic} (confidence: {confidence:.2f})")
             return False
-    
+
     async def _on_dialogue_message(self, session_id: str, message: DialogueMessage):
         """
-        대화 메시지 수신 처리
-        하위 클래스에서 오버라이드하여 구체적인 반응 구현
+        Handle received dialogue message
+        Override in subclasses to implement specific reactions
         """
-        logger.debug(f"💬 [{self.name}] 메시지 수신: [{message.speaker}] {message.content[:50]}...")
-    
+        logger.debug(f"💬 [{self.name}] Message received: [{message.speaker}] {message.content[:50]}...")
+
     async def _generate_dialogue_response(self, session_id: str,
                                         context: List[DialogueMessage]) -> Optional[DialogueMessage]:
         """
-        대화 응답 생성
-        하위 클래스에서 오버라이드하여 지능적인 응답 생성
+        Generate dialogue response
+        Override in subclasses to generate intelligent responses
         """
         if not context:
             return None
-        
+
         last_message = context[-1]
-        
-        # 자신에게 온 질문에 대한 응답
+
+        # Respond to questions directed at this agent
         if last_message.turn_type == DialogueTurn.QUESTION:
             if f"@{self.id}" in last_message.content or last_message.metadata.get("target_agent") == self.id:
-                # 질문 내용 추출
+                # Extract question content
                 question = last_message.content.replace(f"@{self.id}", "").strip()
-                
+
                 try:
-                    # 에이전트의 process 메서드를 사용하여 답변 생성
+                    # Generate answer using agent's process method
                     response = await self.process(question, {"dialogue_context": context})
-                    
+
                     if response.type == AgentResponseType.SUCCESS:
                         answer_content = response.content
                         if isinstance(answer_content, dict):
                             answer_content = answer_content.get("message", str(answer_content))
-                        
+
                         return DialogueMessage(
                             speaker=self.id,
                             turn_type=DialogueTurn.ANSWER,
@@ -515,111 +515,111 @@ class LogosAIAgent:
                             in_reply_to=last_message.message_id
                         )
                 except Exception as e:
-                    logger.error(f"대화 응답 생성 중 오류: {e}")
+                    logger.error(f"Error generating dialogue response: {e}")
                     return DialogueMessage(
                         speaker=self.id,
                         turn_type=DialogueTurn.ANSWER,
-                        content=f"죄송합니다. 답변 생성 중 오류가 발생했습니다: {str(e)}",
+                        content=f"Sorry, an error occurred while generating the response: {str(e)}",
                         in_reply_to=last_message.message_id
                     )
-        
+
         return None
     
     async def can_handle(self, query: str, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, float, str]:
         """
-        쿼리 처리 가능 여부 평가
-        
+        Evaluate whether query can be handled
+
         Args:
-            query: 사용자 쿼리
-            context: 추가 컨텍스트
-            
+            query: User query
+            context: Additional context
+
         Returns:
-            (처리 가능 여부, 신뢰도 0-1, 이유)
+            (can_handle, confidence 0-1, reason)
         """
         if self._self_assessment is None:
-            # 자기평가 시스템이 없으면 기본값 반환
-            return True, 0.5, "자기평가 시스템 비활성화"
-        
+            # Return default values if self-assessment system is not available
+            return True, 0.5, "Self-assessment system disabled"
+
         try:
-            # 자기평가 수행
+            # Perform self-assessment
             assessment_result = await self._self_assessment.assess_request_compatibility(query, context)
-            
-            # 결과 변환
+
+            # Convert results
             can_handle = assessment_result.can_handle
             confidence = assessment_result.confidence_score
-            
-            # 이유 구성
+
+            # Construct reason
             reasons = assessment_result.reasoning
             if assessment_result.capability_level.value:
-                reasons.insert(0, f"능력 수준: {assessment_result.capability_level.value}")
-            reason = " | ".join(reasons[:3])  # 상위 3개 이유만
-            
+                reasons.insert(0, f"Capability level: {assessment_result.capability_level.value}")
+            reason = " | ".join(reasons[:3])  # Top 3 reasons only
+
             return can_handle, confidence, reason
-            
+
         except Exception as e:
-            logger.error(f"자기평가 중 오류 발생: {e}")
-            return True, 0.5, f"평가 오류: {str(e)}"
+            logger.error(f"Error during self-assessment: {e}")
+            return True, 0.5, f"Assessment error: {str(e)}"
     
     async def process_with_optimization(
-        self, 
-        query: str, 
+        self,
+        query: str,
         context: Optional[Dict[str, Any]] = None,
         agent_type_override: Optional[str] = None
     ) -> AgentResponse:
         """
-        쿼리 최적화를 포함한 처리
-        
-        이 메서드는 다음 단계를 수행합니다:
-        1. 에이전트 적합성 판단
-        2. 쿼리 최적화 (에이전트 타입별)
-        3. 최적화된 쿼리로 처리 실행
-        
+        Processing with query optimization
+
+        This method performs the following steps:
+        1. Determine agent suitability
+        2. Query optimization (by agent type)
+        3. Execute processing with optimized query
+
         Args:
-            query: 원본 쿼리
-            context: 처리 컨텍스트
-            agent_type_override: 에이전트 타입 오버라이드 (선택사항)
-            
+            query: Original query
+            context: Processing context
+            agent_type_override: Agent type override (optional)
+
         Returns:
-            AgentResponse: 처리 결과 (최적화 정보 포함)
+            AgentResponse: Processing result (includes optimization info)
         """
         if not self.initialized:
             await self.initialize()
-        
-        # 1. 쿼리 최적화 시스템 사용 가능 여부 확인
+
+        # 1. Check if query optimization system is available
         _lazy_import_query_optimizer()
         if optimize_query_for_agent is None:
-            logger.warning("쿼리 최적화 시스템을 사용할 수 없어 원본 쿼리로 처리합니다")
+            logger.warning("Query optimization system unavailable, processing with original query")
             return await self.process(query, context)
-        
+
         try:
-            # 2. 에이전트 타입 결정
+            # 2. Determine agent type
             agent_type = agent_type_override or self._get_agent_type_for_optimization()
-            
-            # 3. 쿼리 최적화 실행
+
+            # 3. Execute query optimization
             optimization_result = await optimize_query_for_agent(
                 query=query,
                 agent_type=agent_type,
                 agent_id=getattr(self.config, 'agent_id', None),
                 context=context
             )
-            
-            # 4. 적합성 체크
+
+            # 4. Check suitability
             if not optimization_result.is_suitable:
                 logger.warning(
-                    f"에이전트 타입 '{agent_type}'에 적합하지 않은 쿼리입니다. "
-                    f"적합성 점수: {optimization_result.suitability_score:.2f}"
+                    f"Query not suitable for agent type '{agent_type}'. "
+                    f"Suitability score: {optimization_result.suitability_score:.2f}"
                 )
-                # 적합하지 않아도 처리는 계속 진행
+                # Continue processing even if not suitable
             else:
                 logger.info(
-                    f"쿼리 최적화 완료 - 적합성: {optimization_result.suitability_score:.2f}, "
-                    f"최적화: {optimization_result.optimization_reason}"
+                    f"Query optimization complete - suitability: {optimization_result.suitability_score:.2f}, "
+                    f"optimization: {optimization_result.optimization_reason}"
                 )
-            
-            # 5. 최적화된 쿼리로 처리
+
+            # 5. Process with optimized query
             optimized_query = optimization_result.optimized_query
-            
-            # 컨텍스트에 최적화 정보 추가
+
+            # Add optimization info to context
             enhanced_context = context.copy() if context else {}
             enhanced_context.update({
                 'query_optimization': {
@@ -632,29 +632,29 @@ class LogosAIAgent:
                     'agent_type': agent_type
                 }
             })
-            
-            # 6. 실제 처리 실행
+
+            # 6. Execute actual processing
             response = await self.process(optimized_query, enhanced_context)
-            
-            # 7. 응답에 최적화 정보 추가
+
+            # 7. Add optimization info to response
             if response.metadata is None:
                 response.metadata = {}
             response.metadata['query_optimization'] = enhanced_context['query_optimization']
-            
+
             return response
-            
+
         except Exception as e:
-            logger.error(f"쿼리 최적화 처리 중 오류 발생: {e}")
-            # 오류 발생 시 원본 쿼리로 폴백
+            logger.error(f"Error during query optimization processing: {e}")
+            # Fallback to original query on error
             return await self.process(query, context)
     
     def _get_agent_type_for_optimization(self) -> str:
-        """최적화를 위한 에이전트 타입 반환"""
-        # config에서 agent_type을 가져오고 최적화 시스템 타입으로 매핑
+        """Return agent type for optimization"""
+        # Get agent_type from config and map to optimization system type
         if hasattr(self.config, 'agent_type'):
             agent_type_str = str(self.config.agent_type.value).lower()
-            
-            # 타입 매핑
+
+            # Type mapping
             type_mapping = {
                 'document_processing': 'rag',
                 'text_search': 'search',
@@ -676,8 +676,8 @@ class LogosAIAgent:
             }
             
             return type_mapping.get(agent_type_str, 'general')
-        
-        # 클래스 이름에서 추론
+
+        # Infer from class name
         class_name = self.__class__.__name__.lower()
         if 'rag' in class_name or 'document' in class_name:
             return 'rag'
@@ -695,82 +695,82 @@ class LogosAIAgent:
             return 'internet'
         else:
             return 'general'
-    
+
     async def check_query_suitability(self, query: str) -> Dict[str, Any]:
         """
-        쿼리가 이 에이전트에 적합한지 확인
-        
+        Check if query is suitable for this agent
+
         Args:
-            query: 확인할 쿼리
-            
+            query: Query to check
+
         Returns:
-            Dict[str, Any]: 적합성 정보
+            Dict[str, Any]: Suitability information
         """
         _lazy_import_query_optimizer()
         if check_agent_suitability is None:
             return {
                 'is_suitable': True,
                 'suitability_score': 0.5,
-                'reason': '쿼리 최적화 시스템을 사용할 수 없음'
+                'reason': 'Query optimization system unavailable'
             }
-        
+
         try:
             agent_type = self._get_agent_type_for_optimization()
             is_suitable, score = await check_agent_suitability(query, agent_type)
-            
+
             return {
                 'is_suitable': is_suitable,
                 'suitability_score': score,
                 'agent_type': agent_type,
-                'reason': f'적합성 점수 기반 판단: {score:.2f}'
+                'reason': f'Suitability score-based decision: {score:.2f}'
             }
         except Exception as e:
-            logger.error(f"적합성 체크 중 오류: {e}")
+            logger.error(f"Error during suitability check: {e}")
             return {
                 'is_suitable': True,
                 'suitability_score': 0.5,
-                'reason': f'적합성 체크 실패: {str(e)}'
+                'reason': f'Suitability check failed: {str(e)}'
             }
     
     async def process_with_fallback(self, request: Any) -> AgentResponse:
         """
-        에이전트 처리 메서드 (에러 발생 시 라우팅 지원)
-        
-        이 메서드는 process 메서드를 호출하고, 오류 발생 시
-        AgentRouter를 사용하여 다른 적절한 에이전트로 라우팅을 시도합니다.
-        
+        Agent processing method (with routing support on error)
+
+        This method calls the process method, and on error
+        attempts to route to another appropriate agent using AgentRouter.
+
         Args:
-            request: 처리할 요청 (문자열 또는 딕셔너리)
-            
+            request: Request to process (string or dictionary)
+
         Returns:
-            처리 결과
+            Processing result
         """
         try:
-            # agent_router 모듈 임포트 시도
+            # Attempt to import agent_router module
             try:
                 from .agent_router import process_with_fallback
-                # AgentRouter 사용하여 처리
+                # Process using AgentRouter
                 return await process_with_fallback(self, request)
             except ImportError:
-                # AgentRouter를 사용할 수 없는 경우 직접 처리
+                # Process directly if AgentRouter is unavailable
                 return await self.process(request)
         except Exception as e:
-            # 최종 에러 처리
+            # Final error handling
             return AgentResponse(
                 type=AgentResponseType.ERROR,
                 content={
-                    "answer": f"처리 중 오류: {str(e)}",
+                    "answer": f"Processing error: {str(e)}",
                     "error": str(e)
                 },
-                message=f"처리 중 오류가 발생했습니다: {str(e)}",
+                message=f"An error occurred during processing: {str(e)}",
                 metadata={"error_type": type(e).__name__}
             )
-    
+
     def get_info(self) -> Dict[str, Any]:
-        """에이전트 정보 반환
-        
+        """Return agent information
+
         Returns:
-            Dict[str, Any]: 에이전트 정보
+            Dict[str, Any]: Agent information
         """
         return {
             "name": self.config.name,
@@ -779,75 +779,75 @@ class LogosAIAgent:
             "capabilities": self.get_capabilities(),
             "initialized": self.initialized
         }
-    
+
     def get_capabilities(self) -> Dict[str, Any]:
-        """에이전트 기능 반환
-        
+        """Return agent capabilities
+
         Returns:
-            Dict[str, Any]: 에이전트 기능 목록
+            Dict[str, Any]: List of agent capabilities
         """
         return {}
 
 class AgentTemplate:
-    """에이전트 템플릿"""
+    """Agent Template"""
     def __init__(self, config: AgentConfig):
         self.config = config
         self.session = None
         self.llm = None
         self.chain = None
-        
+
     @classmethod
     def create_default(cls) -> 'AgentTemplate':
-        """기본 설정으로 에이전트 생성"""
+        """Create agent with default configuration"""
         config = AgentConfig(
             name="Default Agent",
             agent_type=AgentType.UNKNOWN,
-            description="기본 에이전트"
+            description="Default agent"
         )
         return cls(config)
-        
+
     async def initialize(self) -> None:
-        """에이전트 초기화"""
-        # session은 None으로 설정하여 _process_logic이 호출되도록 합니다
+        """Initialize agent"""
+        # Set session to None so that _process_logic is called
         self.session = None
-        
+
         self.llm = ChatOpenAI(
             model_name="gpt-4",
             temperature=0.3
         )
-        # 체인 생성
+        # Create chain
         self.chain = self._create_classification_chain()
-        
+
         logger.info("Agent has been successfully initialized.")
-    
+
     async def process(self, input_data: Any) -> AgentResponse:
-        """입력 데이터 처리"""
-        raise NotImplementedError("이 메서드는 하위 클래스에서 구현해야 합니다.")
+        """Process input data"""
+        raise NotImplementedError("This method must be implemented in subclasses.")
 
 def create_agent(agent_type: Union[AgentType, str], config: Optional[AgentConfig] = None) -> LogosAIAgent:
-    """에이전트 생성
-    
+    """Create agent
+
     Args:
-        agent_type: 생성할 에이전트 유형
-        config: 에이전트 설정
-        
+        agent_type: Type of agent to create
+        config: Agent configuration
+
     Returns:
-        LogosAIAgent: 생성된 에이전트
-        
+        LogosAIAgent: Created agent
+
     Raises:
-        ValueError: 지원하지 않는 에이전트 유형
+        ValueError: Unsupported agent type
     """
     if isinstance(agent_type, str):
         agent_type = AgentType.from_string(agent_type)
-    
+
     if config is None:
         config = AgentConfig(
             name=f"{agent_type.value}_agent",
             agent_type=agent_type,
-            description=f"{agent_type.value} 에이전트"
+            description=f"{agent_type.value} agent"
         )
-    
-    # 에이전트 유형에 따라 적절한 클래스 반환
+
+    # Return appropriate class based on agent type
     if agent_type == AgentType.LLM:
         from .agents.llm import LLMAgent
         return LLMAgent(config)
@@ -855,4 +855,4 @@ def create_agent(agent_type: Union[AgentType, str], config: Optional[AgentConfig
         from .agents.search import SearchAgent
         return SearchAgent(config)
     else:
-        raise ValueError(f"지원하지 않는 에이전트 유형: {agent_type}") 
+        raise ValueError(f"Unsupported agent type: {agent_type}") 

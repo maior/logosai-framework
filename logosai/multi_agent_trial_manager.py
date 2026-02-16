@@ -530,12 +530,12 @@ if __name__ == "__main__":
             strategy=TrialStrategy.BEST_FIRST
         )
         
-        print(f"최종 선택된 에이전트: {result.agent_id if result else 'None'}")
-        print(f"품질 점수: {result.quality_score.overall_score if result else 'N/A'}")
-        
+        logger.info(f"최종 선택된 에이전트: {result.agent_id if result else 'None'}")
+        logger.info(f"품질 점수: {result.quality_score.overall_score if result else 'N/A'}")
+
         # 통계 조회
         stats = manager.get_system_stats()
-        print(f"시스템 통계: {stats}")
+        logger.info(f"시스템 통계: {stats}")
     
     # 테스트 실행
     # asyncio.run(test_trial_manager())

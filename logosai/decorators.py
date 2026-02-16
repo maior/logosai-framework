@@ -606,5 +606,5 @@ if __name__ == "__main__":
                 "temperature_unit": temperature_unit,
                 "weather_data": "예제 날씨 데이터"
             }
-    
-    print("고급 데코레이터 예제 정의 완료")
+
+    logger.info("고급 데코레이터 예제 정의 완료")
