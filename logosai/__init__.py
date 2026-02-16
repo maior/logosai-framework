@@ -344,6 +344,27 @@ try:
 except ImportError:
     pass
 
+# Collaboration System (v0.8.0) - Agent-to-Agent Communication
+try:
+    from .collaboration import (
+        CollaborationService,
+        CollaborationRequest,
+        CollaborationResult,
+        CollaborationStatus,
+        AgentCapability,
+        GlobalCallGraph,
+    )
+    __all__ += [
+        "CollaborationService",
+        "CollaborationRequest",
+        "CollaborationResult",
+        "CollaborationStatus",
+        "AgentCapability",
+        "GlobalCallGraph",
+    ]
+except ImportError:
+    pass
+
 # 개발 모드에서 SDK 정보 출력
 if os.getenv("LOGOSAI_SHOW_INFO", "").lower() == "true":
     try:

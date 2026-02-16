@@ -4,12 +4,17 @@ LogosAI 에이전트 구현
 이 모듈은 LogosAI 에이전트의 기본 클래스와 유틸리티 함수를 제공합니다.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Dict, Any, Optional, Union, List, Tuple
+from typing import Dict, Any, Optional, Union, List, Tuple, TYPE_CHECKING
 from .agent_types import AgentType, AgentResponse, AgentResponseType
 from .config import AgentConfig
 from loguru import logger
+
+if TYPE_CHECKING:
+    from .collaboration import CollaborationService, CollaborationResult, AgentCapability
 
 # Optional LLM dependency
 try:
@@ -77,6 +82,9 @@ class LogosAIAgent:
         # 대화 프로토콜 초기화
         self._dialogue_protocol = None
         self._init_dialogue_protocol()
+
+        # 에이전트 간 협업 서비스 (ACP 서버가 런타임에 주입)
+        self._collaboration_service: Optional[CollaborationService] = None
     
     def _should_enable_agentic(self) -> bool:
         """Agentic AI 기능 활성화 여부 결정"""
@@ -346,6 +354,97 @@ class LogosAIAgent:
             logger.warning(f"대화 프로토콜 초기화 실패: {e}")
             self._dialogue_protocol = None
     
+    # ─── Agent Collaboration (에이전트 간 협업) ────────────────────────
+
+    def set_collaboration_service(self, service: CollaborationService) -> None:
+        """
+        협업 서비스 주입 — ACP 서버가 에이전트 로드 시 호출.
+
+        Args:
+            service: CollaborationService 구현체
+        """
+        self._collaboration_service = service
+
+    @property
+    def can_collaborate(self) -> bool:
+        """협업 가능 여부"""
+        return self._collaboration_service is not None
+
+    async def invoke_agent(
+        self,
+        capability: str,
+        query: str,
+        context: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+    ) -> CollaborationResult:
+        """
+        다른 에이전트를 호출하여 협업 수행.
+
+        사용 예시:
+            result = await self.invoke_agent(
+                capability="document_processing",
+                query="이 PDF를 분석해줘: https://example.com/doc.pdf"
+            )
+            if result.status == CollaborationStatus.COMPLETED:
+                pdf_content = result.data
+
+        Args:
+            capability: 필요한 능력 (예: "translation", "document_processing")
+            query: 처리할 쿼리
+            context: 추가 컨텍스트
+            timeout: 타임아웃 (초). None이면 자동 점감 타임아웃
+
+        Returns:
+            CollaborationResult
+        """
+        if self._collaboration_service is None:
+            from .collaboration import CollaborationResult, CollaborationStatus
+            return CollaborationResult(
+                request_id="no-service",
+                status=CollaborationStatus.FAILED,
+                error="No collaboration service available. Agent not running in ACP context.",
+            )
+
+        # context에서 상위 요청 정보 추출 (체인 호출 시)
+        parent_request = None
+        if context and "_collaboration" in context:
+            from .collaboration import CollaborationRequest
+            collab_info = context["_collaboration"]
+            parent_request = CollaborationRequest(
+                request_id=collab_info.get("request_id", ""),
+                caller_id=collab_info.get("caller_id", ""),
+                depth=collab_info.get("depth", 0),
+                call_chain=collab_info.get("call_chain", []),
+                timeout=collab_info.get("timeout", 30.0),
+            )
+
+        return await self._collaboration_service.invoke(
+            caller=self,
+            capability=capability,
+            query=query,
+            context=context,
+            timeout=timeout,
+            parent_request=parent_request,
+        )
+
+    async def discover_agents(
+        self, capability: str
+    ) -> List[AgentCapability]:
+        """
+        특정 능력을 가진 에이전트 목록 조회.
+
+        Args:
+            capability: 필요한 능력
+
+        Returns:
+            매칭된 에이전트 목록. 서비스 미연결 시 빈 리스트.
+        """
+        if self._collaboration_service is None:
+            return []
+        return await self._collaboration_service.discover_agents(
+            capability=capability, exclude_ids=[self.id]
+        )
+
     def get_dialogue_capability(self) -> DialogueCapability:
         """
         에이전트의 대화 능력 정의
