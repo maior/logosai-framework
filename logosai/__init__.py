@@ -115,8 +115,8 @@ except ImportError as e:
 
 # === ACP module (optional) ===
 try:
-    from .acp import ACPServer, ACPClient
-    __all__ += ["ACPServer", "ACPClient"]
+    from .acp import SimpleACPServer, ACPServer, ACPClient
+    __all__ += ["SimpleACPServer", "ACPServer", "ACPClient"]
 except ImportError as e:
     _logger.debug("ACP module not available: %s", e)
 

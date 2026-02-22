@@ -28,7 +28,8 @@ python decorator_agent.py
 | **`decorator_agent.py`** | `@agent` decorator — function becomes agent | Yes |
 | `hello_agent.py` | Classic `LogosAIAgent` subclass | No |
 | `calculator_agent.py` | Math expression evaluator with safe eval | No |
-| `sample_acp_server.py` | Mini ACP server hosting 2 agents | No |
+| **`simple_acp_server.py`** | `SimpleACPServer` — multi-agent server in ~10 lines | No |
+| `sample_acp_server.py` | Classic ACP server hosting 2 agents | No |
 | `agents.json` | Sample agent configuration | No |
 
 ## Creating Agents — Three Ways
@@ -88,15 +89,26 @@ class MyAgent(LogosAIAgent):
         )
 ```
 
-## Running the ACP Server Sample
+## Running an ACP Server
+
+### SimpleACPServer (Recommended)
+
+```bash
+python simple_acp_server.py
+# Test:
+curl http://localhost:9000/health
+curl http://localhost:9000/jsonrpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"list_agents","id":1}'
+# SSE streaming:
+curl -N "http://localhost:9000/stream?query=Hello&agent_id=greeting_agent"
+```
+
+### Classic ACP Server
 
 ```bash
 pip install aiohttp_cors
 python sample_acp_server.py
-# Test:
-curl http://localhost:9000/jsonrpc \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"list_agents","id":1}'
 ```
 
 See the [main README](../README.md) for full documentation.
