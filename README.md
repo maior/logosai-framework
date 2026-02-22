@@ -1,6 +1,6 @@
 # LogosAI
 
-[![Version](https://img.shields.io/badge/version-0.8.1-blue.svg)](https://github.com/maior/logosai-framework)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](https://github.com/maior/logosai-framework)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -29,10 +29,56 @@ pip install -e .
 
 ## Quick Start
 
+### The Easiest Way (v0.9.0)
+
+```python
+from logosai import quick_llm
+
+answer = await quick_llm("What is the capital of France?")
+# → "Paris"
+```
+
+### SimpleAgent — Zero Boilerplate
+
+```python
+import asyncio
+from logosai import SimpleAgent, AgentResponse
+
+class GreetingAgent(SimpleAgent):
+    agent_name = "Greeting Agent"
+    agent_description = "Generates friendly greetings"
+
+    async def handle(self, query, context=None):
+        greeting = await self.ask_llm(f"Generate a greeting for: {query}")
+        return AgentResponse.success(content={"answer": greeting})
+
+async def main():
+    agent = GreetingAgent()
+    result = await agent.process("Alice")
+    print(result.content["answer"])
+
+asyncio.run(main())
+```
+
+### @agent Decorator — Even Simpler
+
+```python
+from logosai import agent, AgentResponse
+
+@agent(name="Joke Agent", description="Tells jokes")
+async def joke_agent(query, context=None, llm=None):
+    response = await llm.invoke(f"Tell a joke about: {query}")
+    return AgentResponse.success(content={"answer": response.content})
+
+instance = joke_agent()
+result = await instance.process("cats")
+```
+
+### Classic LogosAIAgent
+
 ```python
 import asyncio
 from logosai import LogosAIAgent, AgentConfig, AgentType, AgentResponse, AgentResponseType
-
 
 class MyAgent(LogosAIAgent):
     def __init__(self):
@@ -50,13 +96,11 @@ class MyAgent(LogosAIAgent):
             message="Done",
         )
 
-
 async def main():
     agent = MyAgent()
     await agent.initialize()
     result = await agent.process("Hello, world!")
     print(result.content["answer"])
-
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -70,9 +114,19 @@ See the [samples/](samples/) directory for more examples.
 |-------|-------------|
 | [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | Complete guide to creating intelligent agents with LLM, collaboration, debate, and evolution |
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | How to build and deploy ACP servers that host and orchestrate agents |
-| [Samples](samples/) | Minimal working examples (hello agent, calculator, ACP server) |
+| [Samples](samples/) | Minimal working examples — SimpleAgent, @agent decorator, quick_llm, and more |
 
 ## Features
+
+### SimpleAgent & Utilities (v0.9.0)
+
+Zero-boilerplate agent development:
+
+- **`SimpleAgent`** — Subclass with just `agent_name`, `agent_description`, and `handle()`. Auto-manages init, LLM setup, error handling, and ACP compatibility
+- **`@agent` decorator** — Convert an async function into a full agent in 4 lines
+- **`quick_llm()`** — One-shot LLM call with no setup: `await quick_llm("question")`
+- **`ask_llm()` / `ask_llm_json()`** — Convenience methods on SimpleAgent for LLM calls
+- **Text utilities** — `parse_llm_json()`, `clean_markdown_code()`, `extract_code_block()`, `truncate_for_prompt()`
 
 ### Core Agent Framework
 
@@ -177,9 +231,10 @@ Built-in templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_ag
 ```
 logosai/
 ├── agent.py              # LogosAIAgent base class
+├── simple_agent.py       # SimpleAgent, @agent decorator (v0.9.0)
 ├── agent_types.py        # Type definitions and enums
 ├── config/               # Configuration management
-├── utils/                # LLM client, helpers
+├── utils/                # LLM client, text utilities, helpers
 ├── agents/               # Built-in agent implementations
 ├── workflow/             # Workflow orchestration engine
 ├── message_bus/          # Pub/sub messaging system
@@ -199,9 +254,14 @@ logosai/
 Unified client supporting multiple providers (requires `pip install logosai[llm]`):
 
 ```python
-from logosai.utils.llm_client import LLMClient
+# Quick one-liner (v0.9.0)
+from logosai import quick_llm
+answer = await quick_llm("Explain async/await in Python")
 
-client = LLMClient(provider="gemini", model="gemini-2.5-flash-lite")
+# Full client for advanced usage
+from logosai import LLMClient
+
+client = LLMClient(provider="google", model="gemini-2.5-flash-lite")
 await client.initialize()
 
 # Single prompt
