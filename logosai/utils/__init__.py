@@ -29,12 +29,19 @@ from logosai.utils.llm_settings import (
     get_available_llm_providers
 )
 
-# LLMClient 추가
+# LLMClient
 try:
-    from logosai.utils.llm_client import LLMClient, LLMMessage
-    __llm_client_exports__ = ['LLMClient', 'LLMMessage']
+    from logosai.utils.llm_client import LLMClient, LLMMessage, LLMResponse, quick_llm
+    __llm_client_exports__ = ['LLMClient', 'LLMMessage', 'LLMResponse', 'quick_llm']
 except ImportError:
     __llm_client_exports__ = []
+
+# Text Utilities (v0.9.0)
+try:
+    from logosai.utils.text_utils import parse_llm_json, clean_markdown_code, extract_code_block, truncate_for_prompt
+    __text_utils_exports__ = ['parse_llm_json', 'clean_markdown_code', 'extract_code_block', 'truncate_for_prompt']
+except ImportError:
+    __text_utils_exports__ = []
 
 __all__ = [
     # Config Loader
@@ -60,4 +67,4 @@ __all__ = [
     'update_default_llm_settings',
     'get_model_info',
     'get_available_llm_providers',
-] + __llm_client_exports__
+] + __llm_client_exports__ + __text_utils_exports__

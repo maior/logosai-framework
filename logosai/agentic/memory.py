@@ -226,14 +226,21 @@ class AgenticMemory:
     단기 및 장기 메모리를 관리하고, 효율적인 정보 저장과 검색을 지원합니다.
     """
     
-    def __init__(self, short_term_capacity: int = 7, long_term_size: int = 1000):
+    def __init__(self, short_term_capacity: int = 7, long_term_size: int = 1000,
+                 capacity: Optional[int] = None):
         """
         AgenticMemory 초기화
         
         Args:
             short_term_capacity: 단기 메모리 용량
             long_term_size: 장기 메모리 최대 크기
+            capacity: 총 메모리 용량 (설정 시 long_term_size로 사용)
         """
+        # capacity kwarg가 제공되면 long_term_size로 매핑
+        if capacity is not None:
+            long_term_size = capacity
+        
+        self.capacity = capacity if capacity is not None else long_term_size
         self.short_term = ShortTermMemory(capacity=short_term_capacity)
         self.long_term = LongTermMemory(max_size=long_term_size)
         

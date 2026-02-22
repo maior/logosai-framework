@@ -7,7 +7,7 @@ A Python framework for building, orchestrating, and evolving AI agents.
 import logging as _logging
 import os as _os
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 __author__ = "LogosAI Team"
 __license__ = "MIT"
 __description__ = "Conversational Agent Development Platform"
@@ -37,6 +37,27 @@ __all__ = [
     "ClassificationResult",
     "get_agent_types",
 ]
+
+# === SimpleAgent (v0.9.0) ===
+try:
+    from .simple_agent import SimpleAgent, agent, create_simple_agent
+    __all__ += ["SimpleAgent", "agent", "create_simple_agent"]
+except ImportError as e:
+    _logger.debug("SimpleAgent not available: %s", e)
+
+# === LLM Client — promoted to top-level (v0.9.0) ===
+try:
+    from .utils.llm_client import LLMClient, LLMResponse, LLMMessage, create_llm_client, quick_llm
+    __all__ += ["LLMClient", "LLMResponse", "LLMMessage", "create_llm_client", "quick_llm"]
+except ImportError as e:
+    _logger.debug("LLMClient not available: %s", e)
+
+# === Text Utilities (v0.9.0) ===
+try:
+    from .utils.text_utils import parse_llm_json, clean_markdown_code, extract_code_block, truncate_for_prompt
+    __all__ += ["parse_llm_json", "clean_markdown_code", "extract_code_block", "truncate_for_prompt"]
+except ImportError as e:
+    _logger.debug("Text utilities not available: %s", e)
 
 # === Bundler & Router ===
 try:

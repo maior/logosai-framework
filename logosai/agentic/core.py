@@ -123,21 +123,30 @@ class AgenticCore:
     Think-Plan-Act-Reflect 사이클을 통해 자율적인 의사결정과 학습을 수행합니다.
     """
     
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        agent_name: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ):
         """
         AgenticCore 초기화
-        
+
         Args:
             llm_client: LLM 클라이언트 (없으면 기본값 사용)
+            agent_name: 에이전트 이름 (로깅/컨텍스트용)
+            config: 에이전트 설정 (agentic_config dict)
         """
+        self.agent_name = agent_name or "Agent"
+        self.config = config or {}
         self.llm_client = llm_client or self._create_default_llm()
         self.state = AgenticState.IDLE
         self.thought_history: List[ThoughtProcess] = []
         self.action_history: List[Action] = []
         self.reflection_history: List[Reflection] = []
         self.current_confidence = 0.5
-        
-        logger.info("AgenticCore initialized")
+
+        logger.info(f"AgenticCore initialized for {self.agent_name}")
     
     def _create_default_llm(self) -> LLMClient:
         """기본 LLM 클라이언트 생성"""

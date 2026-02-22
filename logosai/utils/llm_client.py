@@ -682,5 +682,59 @@ def register_ollama_provider():
     )
 
 
+# ─── Convenience: one-shot LLM call ─────────────────
+
+
+async def quick_llm(
+    prompt: str,
+    provider: str = "google",
+    model: str = "gemini-2.5-flash-lite",
+    temperature: float = 0.7,
+    system_prompt: Optional[str] = None,
+    max_tokens: int = 4000,
+) -> str:
+    """
+    One-shot LLM call. Creates client, initializes, calls, returns content string.
+
+    No setup required. Perfect for services that just need a quick LLM call
+    without managing client lifecycle.
+
+    Args:
+        prompt: User prompt
+        provider: LLM provider (google, openai, anthropic, ollama)
+        model: Model name
+        temperature: Creativity (0.0-2.0)
+        system_prompt: Optional system instruction
+        max_tokens: Maximum response tokens
+
+    Returns:
+        Response content as string
+
+    Usage:
+        from logosai.utils.llm_client import quick_llm
+
+        answer = await quick_llm("What is 2+2?")
+        answer = await quick_llm("Translate: hello", provider="openai", model="gpt-4o-mini")
+    """
+    client = LLMClient(
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    await client.initialize()
+
+    if system_prompt:
+        messages = [
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=prompt),
+        ]
+        response = await client.invoke_messages(messages)
+    else:
+        response = await client.invoke(prompt)
+
+    return response.content
+
+
 # 하위 호환성을 위한 별칭
-LLM = LLMClient  # 기존 코드에서 LLM으로 사용하던 경우 
+LLM = LLMClient  # 기존 코드에서 LLM으로 사용하던 경우
