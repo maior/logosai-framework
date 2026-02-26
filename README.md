@@ -1,150 +1,210 @@
 # LogosAI
 
-[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](https://github.com/maior/logosai-framework)
+[![PyPI](https://img.shields.io/pypi/v/logosai.svg)](https://pypi.org/project/logosai/)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A Python framework for building, orchestrating, and evolving AI agents.
+**Build AI agents in 4 lines. Orchestrate them in 10.**
 
-## Installation
+LogosAI is a Python framework for building, orchestrating, and evolving AI agents. Create a single agent with minimal code, or build a multi-agent server with built-in communication, debate, and self-evolution capabilities.
 
-```bash
+```python
 pip install logosai
 ```
 
-With LLM provider support:
+## Why LogosAI?
 
-```bash
-pip install logosai[llm]   # OpenAI, Anthropic, Google Gemini, LangChain
-pip install logosai[all]   # All optional dependencies
-```
-
-Or install from source:
-
-```bash
-git clone https://github.com/maior/logosai-framework.git
-cd logosai-framework
-pip install -e .
-```
+| | LogosAI | LangGraph | CrewAI |
+|---|---------|-----------|--------|
+| **Agent creation** | 4 lines (`@agent` decorator) | 30+ lines | 15+ lines |
+| **Built-in server** | `SimpleACPServer` — add agents & run | Manual setup | Manual setup |
+| **Agent debate** | Agents negotiate workflows via voting | — | — |
+| **Self-evolution** | Agents auto-fix errors & learn | — | — |
+| **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric |
+| **Streaming** | SSE + WebSocket built-in | Custom | Custom |
 
 ## Quick Start
 
-### The Easiest Way (v0.9.0)
+### 1. One-Line LLM Call
 
-```python
-from logosai import quick_llm
-
-answer = await quick_llm("What is the capital of France?")
-# → "Paris"
-```
-
-### SimpleAgent — Zero Boilerplate
+No agent, no setup — just ask:
 
 ```python
 import asyncio
-from logosai import SimpleAgent, AgentResponse
-
-class GreetingAgent(SimpleAgent):
-    agent_name = "Greeting Agent"
-    agent_description = "Generates friendly greetings"
-
-    async def handle(self, query, context=None):
-        greeting = await self.ask_llm(f"Generate a greeting for: {query}")
-        return AgentResponse.success(content={"answer": greeting})
+from logosai import quick_llm
 
 async def main():
-    agent = GreetingAgent()
-    result = await agent.process("Alice")
+    answer = await quick_llm("What is the capital of France?")
+    print(answer)  # "The capital of France is Paris."
+
+    # With system prompt
+    result = await quick_llm(
+        "Hello, how are you?",
+        system_prompt="Translate to Korean.",
+    )
+    print(result)  # "안녕하세요, 어떻게 지내세요?"
+
+asyncio.run(main())
+```
+
+> Requires `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` in your environment.
+
+### 2. Build an Agent (4 Lines)
+
+The `@agent` decorator turns any async function into a full agent:
+
+```python
+import asyncio
+from logosai import agent, AgentResponse
+
+@agent(name="Joke Agent", description="Tells jokes about any topic")
+async def joke_agent(query, context=None, llm=None):
+    response = await llm.invoke(f"Tell a short joke about: {query}")
+    return AgentResponse.success(content={"answer": response.content})
+
+async def main():
+    bot = joke_agent()
+    result = await bot.process("programming")
     print(result.content["answer"])
 
 asyncio.run(main())
 ```
 
-### @agent Decorator — Even Simpler
+### 3. Build an Agent (Class-Based)
 
-```python
-from logosai import agent, AgentResponse
-
-@agent(name="Joke Agent", description="Tells jokes")
-async def joke_agent(query, context=None, llm=None):
-    response = await llm.invoke(f"Tell a joke about: {query}")
-    return AgentResponse.success(content={"answer": response.content})
-
-instance = joke_agent()
-result = await instance.process("cats")
-```
-
-### Classic LogosAIAgent
+`SimpleAgent` gives you more control with `ask_llm()` helper and class attributes:
 
 ```python
 import asyncio
-from logosai import LogosAIAgent, AgentConfig, AgentType, AgentResponse, AgentResponseType
+from logosai import SimpleAgent, AgentResponse
 
-class MyAgent(LogosAIAgent):
-    def __init__(self):
-        config = AgentConfig(
-            name="My Agent",
-            agent_type=AgentType.CUSTOM,
-            description="A simple custom agent",
-        )
-        super().__init__(config)
+class TranslatorAgent(SimpleAgent):
+    agent_name = "Translator"
+    agent_description = "Translates text between languages"
 
-    async def process(self, query: str, context=None) -> AgentResponse:
-        return AgentResponse(
-            type=AgentResponseType.SUCCESS,
-            content={"answer": f"Processed: {query}"},
-            message="Done",
-        )
+    async def handle(self, query, context=None):
+        translation = await self.ask_llm(f"Translate to English: {query}")
+        return AgentResponse.success(content={"answer": translation})
 
 async def main():
-    agent = MyAgent()
-    await agent.initialize()
-    result = await agent.process("Hello, world!")
+    agent = TranslatorAgent()
+    result = await agent.process("안녕하세요, 반갑습니다")
     print(result.content["answer"])
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
 
-See the [samples/](samples/) directory for more examples.
+### 4. Run a Multi-Agent Server
 
-## Documentation
+Host multiple agents with JSON-RPC + SSE streaming in ~10 lines:
 
-| Guide | Description |
-|-------|-------------|
-| [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | Complete guide to creating intelligent agents with LLM, collaboration, debate, and evolution |
-| [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | How to build and deploy ACP servers that host and orchestrate agents |
-| [Samples](samples/) | Minimal working examples — SimpleAgent, @agent decorator, quick_llm, and more |
+```python
+from logosai import SimpleAgent, AgentResponse
+from logosai.acp import SimpleACPServer
+
+class GreetingAgent(SimpleAgent):
+    agent_name = "Greeting Agent"
+    agent_description = "Greets users"
+
+    async def handle(self, query, context=None):
+        return AgentResponse.success(content={"answer": f"Hello! You said: {query}"})
+
+class MathAgent(SimpleAgent):
+    agent_name = "Math Agent"
+    agent_description = "Solves math problems"
+    llm_temperature = 0.0
+
+    async def handle(self, query, context=None):
+        answer = await self.ask_llm(f"Calculate and return ONLY the result: {query}")
+        return AgentResponse.success(content={"answer": answer})
+
+server = SimpleACPServer(port=9000)
+server.add(GreetingAgent())
+server.add(MathAgent())
+server.run()
+```
+
+Test it:
+
+```bash
+# List agents
+curl localhost:9000/jsonrpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"list_agents"}'
+
+# Query an agent
+curl localhost:9000/jsonrpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"process","params":{"query":"3+5","agent_id":"math_agent"}}'
+
+# SSE streaming
+curl -N "localhost:9000/stream?query=Hello&agent_id=greeting_agent"
+```
+
+### 5. Use the LLM Client Directly
+
+Unified client for multiple providers:
+
+```python
+import asyncio
+from logosai import LLMClient
+
+async def main():
+    client = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+    await client.initialize()
+
+    # Single prompt
+    response = await client.invoke("Explain async/await in Python")
+    print(response.content)
+
+    # Chat-style messages
+    response = await client.invoke_messages([
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "What is Python?"},
+    ])
+    print(response.content)
+
+asyncio.run(main())
+```
+
+Supported providers: `openai`, `anthropic`, `google` (Gemini), `ollama`
+
+## Installation
+
+```bash
+pip install logosai          # Core framework
+pip install logosai[llm]     # + LLM providers (OpenAI, Anthropic, Gemini)
+pip install logosai[all]     # + All optional dependencies
+```
+
+From source:
+
+```bash
+git clone https://github.com/maior/logosai-framework.git
+cd logosai-framework
+pip install -e ".[llm]"
+```
 
 ## Features
 
-### SimpleAgent & Utilities (v0.9.0)
+### Core
 
-Zero-boilerplate agent development:
-
-- **`SimpleAgent`** — Subclass with just `agent_name`, `agent_description`, and `handle()`. Auto-manages init, LLM setup, error handling, and ACP compatibility
-- **`@agent` decorator** — Convert an async function into a full agent in 4 lines
-- **`quick_llm()`** — One-shot LLM call with no setup: `await quick_llm("question")`
-- **`ask_llm()` / `ask_llm_json()`** — Convenience methods on SimpleAgent for LLM calls
-- **Text utilities** — `parse_llm_json()`, `clean_markdown_code()`, `extract_code_block()`, `truncate_for_prompt()`
-
-### Core Agent Framework
-
-- **LogosAIAgent** base class with async lifecycle management (`initialize`, `process`, `shutdown`)
-- **AgentConfig** for flexible, config-driven agent behavior
-- **AgentResponse** with typed results (`SUCCESS`, `ERROR`, `PARTIAL`)
-- Multi-provider LLM client (OpenAI, Anthropic, Google Gemini, Ollama)
+- **`SimpleAgent`** — Subclass with `agent_name`, `agent_description`, and `handle()`. Auto-manages init, LLM, errors, and ACP compatibility
+- **`@agent` decorator** — Turn an async function into a full agent in 4 lines
+- **`quick_llm()`** — One-shot LLM call with no setup
+- **`LLMClient`** — Unified client for OpenAI, Anthropic, Google Gemini, Ollama
+- **`LogosAIAgent`** — Full-featured base class with async lifecycle (`initialize`, `process`, `shutdown`)
 
 ### Multi-Agent Orchestration
 
-- **Message Bus** — pub/sub messaging with topic routing, priorities, and correlation IDs
-- **Workflow Engine** — sequential, parallel, and hybrid execution strategies
-- **Agent Router** — request routing with fallback chains
-- **Agent Collaboration** — coordinated multi-agent task execution
+- **SimpleACPServer** — Host agents with JSON-RPC + SSE streaming
+- **Message Bus** — Pub/sub messaging with topic routing and priorities
+- **Workflow Engine** — Sequential, parallel, and hybrid execution strategies
+- **Agent Collaboration** — Coordinated multi-agent task execution
 
-### Agent Debate System (v0.5.0)
+### Agent Debate System
 
-Autonomous multi-agent negotiation for workflow decisions:
+Agents autonomously negotiate and decide on workflows through voting:
 
 ```python
 from logosai.debate import SimpleDebateSystem
@@ -159,9 +219,9 @@ print(result.workflow)  # Agreed-upon execution plan
 
 **5-phase process**: Query Analysis → Role Proposal → Discussion → Voting → Consensus
 
-### Agent Self-Evolution (v0.7.0)
+### Agent Self-Evolution
 
-Agents that learn and improve autonomously:
+Agents that learn, heal, and improve autonomously:
 
 ```python
 from logosai.evolution import EvolutionSystem, EvolutionConfig
@@ -170,52 +230,29 @@ config = EvolutionConfig(enabled=True, llm_provider="google")
 evolution = EvolutionSystem(agent, config)
 await evolution.enable()
 
-result = await evolution.evolve(query="Convert 100 USD to KRW", response="Not supported")
-# result.improvements → suggested fixes
+result = await evolution.evolve(
+    query="Convert 100 USD to KRW",
+    response="Not supported",
+)
+# result.improvements → suggested code fixes
 ```
 
-**Capabilities**: Self-Healing (auto-fix errors) · Self-Growing (add features) · Self-Evaluation (quality scoring)
+**Capabilities**: Self-Healing · Self-Growing · Self-Evaluation
 
 **Safety**: Circuit Breaker (3 failures → 1h cooldown) · Confidence Gates (4-tier validation) · Fix History (cycle prevention)
 
 ### Agentic AI Modules
 
-Advanced reasoning and memory for agents:
-
-```python
-from logosai.agentic import AgenticCore, AgenticReasoning, AgenticMemory
-
-reasoning = AgenticReasoning()
-chain = await reasoning.create_chain("Complex multi-step task...")
-```
-
 | Module | Purpose |
 |--------|---------|
-| `AgenticCore` | Core reasoning engine |
 | `AgenticReasoning` | Chain-of-thought planning |
 | `AgenticTools` | Tool registration and execution |
 | `AgenticMemory` | Short-term and long-term memory |
 | `AgenticLearning` | Learning from interactions |
 
-### ACP (Agent Communication Protocol)
-
-Standard protocol for agent-to-agent communication:
-
-- **JSON-RPC** endpoint for agent discovery and invocation
-- **SSE streaming** for real-time processing events
-- **WebSocket** for bidirectional communication
-
-```python
-from logosai.acp import ACPClient
-
-client = ACPClient(endpoint="http://localhost:8888")
-agents = await client.list_agents()
-result = await client.query("calculator_agent", "What is 42 * 17?")
-```
-
 ### Template Engine
 
-Generate agent code from templates:
+Generate agent code from built-in templates:
 
 ```python
 from logosai.template_engine import TemplateEngine
@@ -224,77 +261,29 @@ engine = TemplateEngine()
 code = engine.render("basic_agent", name="WeatherAgent", description="Fetches weather data")
 ```
 
-Built-in templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `singleton_agent`
+Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `singleton_agent`
 
-## Package Structure
+## Documentation
 
-```
-logosai/
-├── agent.py              # LogosAIAgent base class
-├── simple_agent.py       # SimpleAgent, @agent decorator (v0.9.0)
-├── agent_types.py        # Type definitions and enums
-├── config/               # Configuration management
-├── utils/                # LLM client, text utilities, helpers
-├── agents/               # Built-in agent implementations
-├── workflow/             # Workflow orchestration engine
-├── message_bus/          # Pub/sub messaging system
-├── debate/               # Agent Debate System
-├── evolution/            # Self-Evolution System
-│   └── safety/           # Circuit breaker, confidence gates
-├── agentic/              # Agentic AI modules
-├── acp/                  # ACP client library
-├── template_engine/      # Code generation templates
-├── cli/                  # Command-line tools
-├── market/               # Agent marketplace client
-└── generation/           # LLM-powered code generation
-```
-
-## LLM Client
-
-Unified client supporting multiple providers (requires `pip install logosai[llm]`):
-
-```python
-# Quick one-liner (v0.9.0)
-from logosai import quick_llm
-answer = await quick_llm("Explain async/await in Python")
-
-# Full client for advanced usage
-from logosai import LLMClient
-
-client = LLMClient(provider="google", model="gemini-2.5-flash-lite")
-await client.initialize()
-
-# Single prompt
-response = await client.invoke("Explain async/await in Python")
-
-# Chat messages
-response = await client.invoke_messages([
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is Python?"},
-])
-```
-
-Supported providers: `openai`, `anthropic`, `google` (Gemini), `ollama`
+| Guide | Description |
+|-------|-------------|
+| [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | Complete guide — LLM integration, collaboration, debate, evolution |
+| [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |
+| [Samples](samples/) | Runnable examples for every feature |
 
 ## Requirements
 
-**Core** (installed automatically):
+**Core** (installed automatically): Python 3.8+, aiohttp, pydantic, loguru
 
-- Python 3.8+
-- `aiohttp`, `requests`, `websocket-client`
-- `pydantic`, `loguru`, `python-dotenv`
-
-**Optional** (install with `pip install logosai[llm]`):
-
-- `openai`, `anthropic`, `google-generativeai`
-- `langchain`, `langchain-openai`, `langchain-community`
+**Optional** (`pip install logosai[llm]`): openai, anthropic, google-generativeai, langchain
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — Copyright (c) 2023-2026 LogosAI
 
 ## Links
 
+- [PyPI](https://pypi.org/project/logosai/)
 - [GitHub](https://github.com/maior/logosai-framework)
 - [Issues](https://github.com/maior/logosai-framework/issues)
 - [Samples](samples/)

@@ -10,5 +10,6 @@ prune tests
 prune docs
 prune temp_build
 prune .github
+prune logosai/examples
 
 global-exclude *.py[cod] __pycache__ *.so *.dylib .DS_Store *.gpickle 
