@@ -281,6 +281,14 @@ Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `si
 
 [MIT](LICENSE) — Copyright (c) 2023-2026 LogosAI
 
+## Related Repositories
+
+| Repository | Description | URL |
+|-----------|-------------|-----|
+| **logosai-ontology** | Multi-agent orchestration engine | [github.com/maior/logosai-ontology](https://github.com/maior/logosai-ontology) |
+| **logosai-api** | FastAPI backend server | [github.com/maior/logosai-api](https://github.com/maior/logosai-api) |
+| **logosai-web** | Next.js frontend | [github.com/maior/logosai-web](https://github.com/maior/logosai-web) |
+
 ## Links
 
 - [PyPI](https://pypi.org/project/logosai/)
