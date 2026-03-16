@@ -285,7 +285,25 @@ Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `si
 
 Want the complete LogosAI platform (frontend + backend + agents)? Two options:
 
-### Option A: Docker (recommended — zero dependencies)
+### Option A: One-command install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
+```
+
+This creates `~/logosai/`, clones all 4 repos, installs dependencies, and sets up the database.
+Then start everything:
+
+```bash
+cd ~/logosai
+./start.sh       # Start all services
+./stop.sh        # Stop all services
+./status.sh      # Check what's running
+```
+
+Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+ (or Docker).
+
+### Option B: Docker Compose
 
 ```bash
 git clone https://github.com/maior/logosai-framework.git
@@ -293,17 +311,9 @@ cd logosai-framework
 docker compose up
 ```
 
-Open http://localhost:8010 and start chatting. That's it.
+Includes PostgreSQL — no local database needed.
 
-### Option B: Local install
-
-```bash
-git clone https://github.com/maior/logosai-framework.git
-cd logosai-framework
-./quickstart.sh
-```
-
-Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+. The script clones all repos, installs dependencies, runs migrations, and starts all services.
+### Services
 
 | Service | Port | What it does |
 |---------|------|-------------|
@@ -311,6 +321,8 @@ Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+. The script clones all re
 | logos_api | 8090 | FastAPI backend — auth, streaming, memory |
 | ACP Server | 8888 | Agent runtime — executes agents |
 | PostgreSQL | 5432 | Database |
+
+Open http://localhost:8010 to start chatting.
 
 ## Related Repositories
 

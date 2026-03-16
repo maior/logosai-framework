@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 #
-# LogosAI Quick Start
-# One command to set up the full LogosAI stack.
+# LogosAI Installer
+# Downloads and sets up the full LogosAI stack.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/quickstart.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
 #
 # What it does:
 #   1. Creates ~/logosai/ workspace
 #   2. Clones all 4 repositories
 #   3. Sets up Python venv + Node dependencies
 #   4. Creates database + runs migrations
-#   5. Starts ACP server, API, and frontend
-#   6. Opens the browser
+#   5. Generates start.sh / stop.sh scripts
 #
 # Prerequisites: Python 3.11+, Node.js 18+, PostgreSQL 14+, Git
 #
@@ -38,14 +37,14 @@ warn() { echo -e "${YELLOW}  !${NC} $1"; }
 err()  { echo -e "${RED}  ✗${NC} $1"; }
 step() { echo -e "\n${CYAN}[$1/$TOTAL_STEPS]${NC} ${BOLD}$2${NC}"; }
 
-TOTAL_STEPS=7
+TOTAL_STEPS=5
 
 # ── Banner ──
 echo ""
 echo -e "${PURPLE}  ╔══════════════════════════════════════════╗${NC}"
 echo -e "${PURPLE}  ║${NC}                                          ${PURPLE}║${NC}"
 echo -e "${PURPLE}  ║${NC}   ${BOLD}LogosAI${NC}  Multi-Agent AI Platform       ${PURPLE}║${NC}"
-echo -e "${PURPLE}  ║${NC}   ${DIM}Open Source Quick Start${NC}                 ${PURPLE}║${NC}"
+echo -e "${PURPLE}  ║${NC}   ${DIM}Installer${NC}                               ${PURPLE}║${NC}"
 echo -e "${PURPLE}  ║${NC}                                          ${PURPLE}║${NC}"
 echo -e "${PURPLE}  ╚══════════════════════════════════════════╝${NC}"
 echo ""
@@ -58,7 +57,6 @@ echo -e "  ${DIM}This script will:${NC}"
 echo -e "    1. Clone 4 repos into ${BOLD}$WORKDIR${NC}"
 echo -e "    2. Install Python + Node dependencies"
 echo -e "    3. Set up PostgreSQL database"
-echo -e "    4. Start all services"
 echo ""
 
 # Confirm if running interactively
@@ -77,6 +75,7 @@ fi
 step 1 "Checking prerequisites"
 
 MISSING=0
+PG_OK=0
 
 # Python
 if command -v python3 &>/dev/null; then
@@ -96,8 +95,7 @@ fi
 
 # Node
 if command -v node &>/dev/null; then
-    NODE_VER=$(node --version)
-    log "Node.js $NODE_VER"
+    log "Node.js $(node --version)"
 else
     err "node not found — install from https://nodejs.org"
     MISSING=1
@@ -112,7 +110,6 @@ else
 fi
 
 # PostgreSQL
-PG_OK=0
 if command -v psql &>/dev/null; then
     log "PostgreSQL $(psql --version | grep -oE '[0-9]+\.[0-9]+')"
     PG_OK=1
@@ -140,21 +137,11 @@ fi
 # ══════════════════════════════════════════
 # Step 2: Create workspace & clone repos
 # ══════════════════════════════════════════
-step 2 "Setting up workspace"
+step 2 "Cloning repositories"
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 log "Directory: $WORKDIR"
-
-# Save this script into the workspace
-SCRIPT_PATH="$WORKDIR/quickstart.sh"
-if [ ! -f "$SCRIPT_PATH" ] || [ "$(cat "$0" 2>/dev/null | wc -l)" -gt 10 ]; then
-    # Copy self into workspace (only if piped from curl)
-    if [ ! -f "$SCRIPT_PATH" ]; then
-        cat "$0" > "$SCRIPT_PATH" 2>/dev/null || true
-        chmod +x "$SCRIPT_PATH" 2>/dev/null || true
-    fi
-fi
 
 clone_or_pull() {
     local name="$1" url="$2"
@@ -174,15 +161,16 @@ clone_or_pull logosai-api        https://github.com/maior/logosai-api.git
 clone_or_pull logosai-web        https://github.com/maior/logosai-web.git
 
 # ══════════════════════════════════════════
-# Step 3: Python environment
+# Step 3: Install dependencies
 # ══════════════════════════════════════════
-step 3 "Installing Python dependencies"
+step 3 "Installing dependencies"
 
+# Python
 if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 source .venv/bin/activate
-log "Virtual env: .venv ($(python --version))"
+log "Python venv: .venv ($(python --version))"
 
 pip install --upgrade pip -q 2>/dev/null
 
@@ -200,19 +188,15 @@ echo -ne "  ${DIM}  Installing logos_api deps...${NC}\r"
 pip install -e logosai-api/ -q 2>/dev/null
 log "logos_api dependencies"
 
-# ══════════════════════════════════════════
-# Step 4: Node dependencies
-# ══════════════════════════════════════════
-step 4 "Installing frontend dependencies"
-
+# Node
 echo -ne "  ${DIM}  Running npm install...${NC}\r"
 (cd logosai-web && npm install --silent 2>/dev/null)
 log "logos_web (Next.js)"
 
 # ══════════════════════════════════════════
-# Step 5: Database setup
+# Step 4: Database setup
 # ══════════════════════════════════════════
-step 5 "Setting up database"
+step 4 "Setting up database"
 
 # Start PostgreSQL via Docker if needed
 if [ "$PG_OK" -eq 2 ]; then
@@ -224,14 +208,14 @@ if [ "$PG_OK" -eq 2 ]; then
             -p 5432:5432 \
             postgres:15-alpine >/dev/null 2>&1
         log "PostgreSQL started via Docker"
-        echo -ne "  ${DIM}  Waiting for PostgreSQL...${NC}\r"
+        echo -ne "  ${DIM}  Waiting for PostgreSQL to be ready...${NC}\r"
         sleep 5
     else
         log "PostgreSQL Docker container already running"
     fi
 fi
 
-# Create database (ignore if exists)
+# Create database
 if command -v createdb &>/dev/null; then
     createdb logosai 2>/dev/null && log "Database 'logosai' created" || log "Database 'logosai' exists"
 fi
@@ -252,19 +236,41 @@ else
 fi
 
 # Run migrations
-echo -ne "  ${DIM}  Running migrations...${NC}\r"
+echo -ne "  ${DIM}  Running database migrations...${NC}\r"
 (cd logosai-api && python -m alembic upgrade head 2>/dev/null) \
     && log "Database migrations complete" \
     || warn "Migrations failed — check DATABASE_URL in logosai-api/.env"
 
 # ══════════════════════════════════════════
-# Step 6: Start services
+# Step 5: Generate management scripts
 # ══════════════════════════════════════════
-step 6 "Starting services"
+step 5 "Creating management scripts"
 
 mkdir -p logs
 
-# Kill any existing processes on our ports
+# ── start.sh ──
+cat > "$WORKDIR/start.sh" << 'START_SCRIPT'
+#!/usr/bin/env bash
+#
+# LogosAI — Start all services
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$DIR/.venv/bin/activate"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+NC='\033[0m'
+BOLD='\033[1m'
+DIM='\033[2m'
+
+echo ""
+echo -e "${PURPLE}  LogosAI${NC} — Starting services..."
+echo ""
+
+mkdir -p "$DIR/logs"
+
+# Kill existing processes on our ports
 for PORT in 8888 8090 8010; do
     PID=$(lsof -ti :$PORT 2>/dev/null || true)
     if [ -n "$PID" ]; then
@@ -273,89 +279,37 @@ for PORT in 8888 8090 8010; do
     fi
 done
 
-# Start ACP server
-(cd logosai-framework/samples && \
-    nohup "$WORKDIR/.venv/bin/python" sample_acp_server.py \
-    >> "$WORKDIR/logs/acp.log" 2>&1 &)
-ACP_PID=$!
-echo "$ACP_PID" > "$WORKDIR/logs/acp.pid"
+# ACP server (port 8888)
+(cd "$DIR/logosai-framework/samples" && \
+    nohup "$DIR/.venv/bin/python" sample_acp_server.py \
+    >> "$DIR/logs/acp.log" 2>&1 &)
+echo "$!" > "$DIR/logs/acp.pid"
 sleep 2
-log "ACP server (PID $ACP_PID, port 8888)"
+echo -e "  ${GREEN}✓${NC} ACP server    ${BLUE}http://localhost:8888${NC}  (PID $(cat "$DIR/logs/acp.pid"))"
 
-# Start logos_api
-PYTHONPATH="$WORKDIR/logosai-ontology:$WORKDIR/logosai-framework:$PYTHONPATH" \
-    nohup "$WORKDIR/.venv/bin/python" -m uvicorn app.main:app \
+# logos_api (port 8090)
+PYTHONPATH="$DIR/logosai-ontology:$DIR/logosai-framework:$PYTHONPATH" \
+    nohup "$DIR/.venv/bin/python" -m uvicorn app.main:app \
     --host 0.0.0.0 --port 8090 \
-    --app-dir "$WORKDIR/logosai-api" \
-    >> "$WORKDIR/logs/api.log" 2>&1 &
-API_PID=$!
-echo "$API_PID" > "$WORKDIR/logs/api.pid"
+    --app-dir "$DIR/logosai-api" \
+    >> "$DIR/logs/api.log" 2>&1 &
+echo "$!" > "$DIR/logs/api.pid"
 sleep 3
-log "logos_api (PID $API_PID, port 8090)"
+echo -e "  ${GREEN}✓${NC} logos_api      ${BLUE}http://localhost:8090${NC}  (PID $(cat "$DIR/logs/api.pid"))"
 
-# Start logos_web
-(cd logosai-web && \
+# logos_web (port 8010)
+(cd "$DIR/logosai-web" && \
     nohup npx next dev -p 8010 \
-    >> "$WORKDIR/logs/web.log" 2>&1 &)
-WEB_PID=$!
-echo "$WEB_PID" > "$WORKDIR/logs/web.pid"
+    >> "$DIR/logs/web.log" 2>&1 &)
+echo "$!" > "$DIR/logs/web.pid"
 sleep 5
-log "logos_web (PID $WEB_PID, port 8010)"
+echo -e "  ${GREEN}✓${NC} logos_web      ${BLUE}http://localhost:8010${NC}  (PID $(cat "$DIR/logs/web.pid"))"
 
-# ══════════════════════════════════════════
-# Step 7: Health check
-# ══════════════════════════════════════════
-step 7 "Verifying"
-
-check() {
-    local name="$1" url="$2"
-    if curl -sf --max-time 5 "$url" > /dev/null 2>&1; then
-        log "$name — $url"
-    else
-        warn "$name — not responding yet (check logs/$3)"
-    fi
-}
-
-check "ACP Server"  "http://localhost:8888/jsonrpc" "acp.log"
-check "logos_api"    "http://localhost:8090/health"  "api.log"
-check "logos_web"    "http://localhost:8010"          "web.log"
-
-# ══════════════════════════════════════════
-# Done!
-# ══════════════════════════════════════════
 echo ""
-echo -e "${GREEN}  ╔══════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}  ║${NC}                                          ${GREEN}║${NC}"
-echo -e "${GREEN}  ║${NC}   ${BOLD}LogosAI is ready!${NC}                      ${GREEN}║${NC}"
-echo -e "${GREEN}  ║${NC}                                          ${GREEN}║${NC}"
-echo -e "${GREEN}  ╚══════════════════════════════════════════╝${NC}"
+echo -e "  ${BOLD}API Docs:${NC}  ${BLUE}http://localhost:8090/docs${NC}"
+echo -e "  ${BOLD}Logs:${NC}      $DIR/logs/"
+echo -e "  ${BOLD}Stop:${NC}      $DIR/stop.sh"
 echo ""
-echo -e "  ${BOLD}Services:${NC}"
-echo -e "    Frontend      ${BLUE}http://localhost:8010${NC}"
-echo -e "    API Docs      ${BLUE}http://localhost:8090/docs${NC}"
-echo -e "    ACP Server    ${BLUE}http://localhost:8888${NC}"
-echo ""
-echo -e "  ${BOLD}Workspace:${NC}        $WORKDIR"
-echo -e "  ${BOLD}Logs:${NC}             $WORKDIR/logs/"
-echo -e "  ${BOLD}Python venv:${NC}      source $WORKDIR/.venv/bin/activate"
-echo ""
-echo -e "  ${BOLD}Stop all:${NC}"
-echo -e "    kill \$(cat $WORKDIR/logs/*.pid)"
-echo ""
-echo -e "  ${BOLD}Restart:${NC}"
-echo -e "    cd $WORKDIR && ./quickstart.sh"
-echo ""
-
-# Create a stop script
-cat > "$WORKDIR/stop.sh" << 'STOP'
-#!/usr/bin/env bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-for f in "$DIR"/logs/*.pid; do
-    [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null && rm "$f"
-done
-echo "All LogosAI services stopped."
-STOP
-chmod +x "$WORKDIR/stop.sh"
 
 # Open browser
 if command -v open &>/dev/null; then
@@ -363,3 +317,97 @@ if command -v open &>/dev/null; then
 elif command -v xdg-open &>/dev/null; then
     xdg-open "http://localhost:8010" 2>/dev/null || true
 fi
+START_SCRIPT
+chmod +x "$WORKDIR/start.sh"
+log "start.sh"
+
+# ── stop.sh ──
+cat > "$WORKDIR/stop.sh" << 'STOP_SCRIPT'
+#!/usr/bin/env bash
+#
+# LogosAI — Stop all services
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo ""
+STOPPED=0
+for f in "$DIR"/logs/*.pid; do
+    [ -f "$f" ] || continue
+    PID=$(cat "$f")
+    NAME=$(basename "$f" .pid)
+    if kill "$PID" 2>/dev/null; then
+        echo -e "  ${RED}■${NC} Stopped $NAME (PID $PID)"
+        STOPPED=$((STOPPED + 1))
+    fi
+    rm -f "$f"
+done
+
+if [ "$STOPPED" -eq 0 ]; then
+    echo "  No services were running."
+else
+    echo ""
+    echo "  $STOPPED service(s) stopped."
+fi
+echo ""
+STOP_SCRIPT
+chmod +x "$WORKDIR/stop.sh"
+log "stop.sh"
+
+# ── status.sh ──
+cat > "$WORKDIR/status.sh" << 'STATUS_SCRIPT'
+#!/usr/bin/env bash
+#
+# LogosAI — Check service status
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+echo ""
+echo -e "  ${BOLD}LogosAI Service Status${NC}"
+echo ""
+
+check() {
+    local name="$1" port="$2" pidfile="$DIR/logs/$3.pid"
+    local status="${RED}■ stopped${NC}"
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+        status="${GREEN}● running${NC} (PID $(cat "$pidfile"))"
+    fi
+    printf "  %-16s %-30b ${BLUE}:%s${NC}\n" "$name" "$status" "$port"
+}
+
+check "ACP server"  8888 acp
+check "logos_api"   8090 api
+check "logos_web"   8010 web
+echo ""
+STATUS_SCRIPT
+chmod +x "$WORKDIR/status.sh"
+log "status.sh"
+
+# ══════════════════════════════════════════
+# Done!
+# ══════════════════════════════════════════
+echo ""
+echo -e "${GREEN}  ╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}  ║${NC}                                          ${GREEN}║${NC}"
+echo -e "${GREEN}  ║${NC}   ${BOLD}Installation complete!${NC}                 ${GREEN}║${NC}"
+echo -e "${GREEN}  ║${NC}                                          ${GREEN}║${NC}"
+echo -e "${GREEN}  ╚══════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  ${BOLD}Workspace:${NC}  $WORKDIR"
+echo ""
+echo -e "  ${BOLD}Next steps:${NC}"
+echo -e "    cd $WORKDIR"
+echo -e "    ./start.sh          ${DIM}# Start all services${NC}"
+echo -e "    ./stop.sh           ${DIM}# Stop all services${NC}"
+echo -e "    ./status.sh         ${DIM}# Check service status${NC}"
+echo ""
+echo -e "  ${DIM}Tip: Edit logosai-api/.env for database and API key settings${NC}"
+echo ""
