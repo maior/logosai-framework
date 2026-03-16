@@ -291,17 +291,62 @@ Want the complete LogosAI platform (frontend + backend + agents)? Two options:
 curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
 ```
 
-This creates `~/logosai/`, clones all 4 repos, installs dependencies, and sets up the database.
-Then start everything:
+#### What the installer does
+
+The script runs 5 steps automatically:
+
+| Step | What happens |
+|------|-------------|
+| **1. Prerequisites check** | Detects OS (Ubuntu/macOS), verifies Python 3.11+, Node.js 18+, npm, Git, PostgreSQL 14+ (or Docker). Shows OS-specific install commands if anything is missing. Also checks for `python3-venv` and `pip` on Ubuntu. |
+| **2. Clone repositories** | Clones all 4 repos into `~/logosai/` (or `$LOGOSAI_DIR` if set). If repos already exist, pulls the latest changes instead. |
+| **3. Install dependencies** | Creates a Python virtual environment (`.venv/`), installs logosai framework, ontology dependencies, logos_api dependencies, and runs `npm install` for logos_web. |
+| **4. Database setup** | If PostgreSQL is not installed but Docker is available, automatically starts a PostgreSQL 15 container. Creates the `logosai` database, copies `.env.example` files, and runs Alembic migrations. Safe to re-run — won't drop existing data. |
+| **5. Generate scripts** | Creates `start.sh`, `stop.sh`, and `status.sh` in the workspace directory. |
+
+#### Prerequisites
+
+| Tool | Minimum Version | Ubuntu | macOS |
+|------|----------------|--------|-------|
+| Python | 3.11+ | `sudo apt install python3.11 python3.11-venv python3-pip` | `brew install python@3.11` |
+| Node.js | 18+ | `curl -fsSL https://deb.nodesource.com/setup_18.x \| sudo -E bash - && sudo apt install nodejs` | `brew install node@18` |
+| Git | any | `sudo apt install git` | `xcode-select --install` |
+| PostgreSQL | 14+ | `sudo apt install postgresql && sudo systemctl start postgresql` | `brew install postgresql@15 && brew services start postgresql@15` |
+
+> **No PostgreSQL?** If Docker is installed, the installer automatically runs PostgreSQL in a container. No manual setup needed.
+
+#### After installation
 
 ```bash
 cd ~/logosai
-./start.sh       # Start all services
+./start.sh       # Start all services (ACP + API + frontend)
 ./stop.sh        # Stop all services
 ./status.sh      # Check what's running
 ```
 
-Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+ (or Docker).
+#### Workspace structure
+
+```
+~/logosai/
+├── logosai-framework/    # Python SDK + Agent Runtime
+├── logosai-ontology/     # Orchestration Engine
+├── logosai-api/          # FastAPI Backend
+├── logosai-web/          # Next.js Frontend
+├── .venv/                # Python virtual environment
+├── logs/                 # Service logs + PID files
+├── start.sh              # Start all services
+├── stop.sh               # Stop all services
+└── status.sh             # Check service status
+```
+
+#### Custom install directory
+
+```bash
+LOGOSAI_DIR=~/my-project curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
+```
+
+#### Re-running the installer
+
+Safe to run multiple times. It will pull the latest code, skip existing databases, and regenerate management scripts. No data will be lost.
 
 ### Option B: Docker Compose
 
@@ -311,7 +356,7 @@ cd logosai-framework
 docker compose up
 ```
 
-Includes PostgreSQL — no local database needed.
+Includes PostgreSQL — no local database, Python, or Node.js needed. Just Docker.
 
 ### Services
 
@@ -320,7 +365,7 @@ Includes PostgreSQL — no local database needed.
 | logos_web | 8010 | Next.js frontend — chat UI |
 | logos_api | 8090 | FastAPI backend — auth, streaming, memory |
 | ACP Server | 8888 | Agent runtime — executes agents |
-| PostgreSQL | 5432 | Database |
+| PostgreSQL | 5432 | Database (auto-provisioned) |
 
 Open http://localhost:8010 to start chatting.
 
