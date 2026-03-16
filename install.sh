@@ -280,7 +280,17 @@ step "Setting up database"
 
 # Docker PostgreSQL if needed
 if [ "$PG_OK" -eq 2 ]; then
-    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+    # Check if container exists but is stopped
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+            echo -ne "  ${DIM}◇ Restarting stopped PostgreSQL container...${NC}"
+            docker start logosai-pg >/dev/null 2>&1
+            echo -ne "\r$(printf '%-60s' '')\r"
+            ok "PostgreSQL ${DIM}(Docker: logosai-pg restarted)${NC}"
+        else
+            ok "PostgreSQL Docker container running"
+        fi
+    else
         echo -ne "  ${DIM}◇ Starting PostgreSQL via Docker...${NC}"
         docker run -d --name logosai-pg \
             -e POSTGRES_USER=postgres \
@@ -289,28 +299,51 @@ if [ "$PG_OK" -eq 2 ]; then
             -p 5432:5432 \
             postgres:15-alpine >/dev/null 2>&1
         echo -ne "\r$(printf '%-60s' '')\r"
-        ok "PostgreSQL ${DIM}(Docker: logosai-pg)${NC}"
-        echo -ne "  ${DIM}◇ Waiting for database to be ready...${NC}"
-        sleep 6
-        echo -ne "\r$(printf '%-60s' '')\r"
-    else
-        ok "PostgreSQL Docker container running"
+        ok "PostgreSQL ${DIM}(Docker: logosai-pg — postgres:postgres@localhost:5432)${NC}"
     fi
+
+    # Wait for PostgreSQL to accept connections
+    echo -ne "  ${DIM}◇ Waiting for PostgreSQL to accept connections...${NC}"
+    for i in $(seq 1 15); do
+        if docker exec logosai-pg pg_isready -U postgres >/dev/null 2>&1; then
+            echo -ne "\r$(printf '%-60s' '')\r"
+            ok "PostgreSQL is ready"
+            break
+        fi
+        sleep 1
+    done
 fi
 
 # Create database
-if command -v createdb &>/dev/null; then
+if [ "$PG_OK" -eq 1 ] && command -v createdb &>/dev/null; then
+    # Local PostgreSQL — use createdb
     createdb logosai 2>/dev/null \
         && ok "Database ${W}logosai${NC} created" \
         || ok "Database ${W}logosai${NC} exists"
+elif [ "$PG_OK" -eq 2 ]; then
+    # Docker PostgreSQL — POSTGRES_DB=logosai already creates it
+    # But verify it exists, create if somehow missing
+    docker exec logosai-pg psql -U postgres -lqt 2>/dev/null | grep -qw logosai \
+        && ok "Database ${W}logosai${NC} exists ${DIM}(Docker)${NC}" \
+        || { docker exec logosai-pg createdb -U postgres logosai 2>/dev/null; ok "Database ${W}logosai${NC} created ${DIM}(Docker)${NC}"; }
 fi
 
-# .env files
+# .env files — set correct DATABASE_URL based on PostgreSQL mode
 if [ ! -f logosai-api/.env ]; then
     cp logosai-api/.env.example logosai-api/.env
     ok "Config ${W}logosai-api/.env${NC} ${DIM}(from .env.example)${NC}"
 else
     ok "Config ${W}logosai-api/.env${NC} exists"
+fi
+
+# Ensure DATABASE_URL is set correctly in .env
+if [ "$PG_OK" -eq 2 ]; then
+    # Docker mode — make sure .env points to localhost:5432 with postgres:postgres
+    if grep -q "DATABASE_URL" logosai-api/.env 2>/dev/null; then
+        dim "  DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/logosai"
+    fi
+elif [ "$PG_OK" -eq 1 ]; then
+    dim "  DATABASE_URL: check logosai-api/.env matches your PostgreSQL credentials"
 fi
 
 if [ ! -f logosai-web/.env.local ]; then
@@ -322,9 +355,23 @@ fi
 
 # Migrations
 echo -ne "  ${DIM}◇ Running Alembic migrations...${NC}"
-(cd logosai-api && python -m alembic upgrade head 2>/dev/null) \
+MIGRATION_OUTPUT=$(cd logosai-api && python -m alembic upgrade head 2>&1) \
     && { echo -ne "\r$(printf '%-60s' '')\r"; ok "Database migrations ${G}complete${NC}"; } \
-    || { echo -ne "\r$(printf '%-60s' '')\r"; warn "Migrations failed — edit ${W}logosai-api/.env${NC} and re-run"; }
+    || {
+        echo -ne "\r$(printf '%-60s' '')\r"
+        warn "Migrations failed"
+        echo ""
+        dim "  Possible causes:"
+        dim "    - PostgreSQL is not running or not accepting connections"
+        dim "    - DATABASE_URL in logosai-api/.env is incorrect"
+        dim "    - Database 'logosai' does not exist"
+        echo ""
+        dim "  To fix manually:"
+        dim "    1. Edit $WORKDIR/logosai-api/.env"
+        dim "    2. Set DATABASE_URL=postgresql+asyncpg://USER:PASS@HOST:5432/logosai"
+        dim "    3. Run: cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
+        echo ""
+    }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 5: Generate management scripts
