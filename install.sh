@@ -121,61 +121,158 @@ step "Checking prerequisites"
 
 MISSING=0
 PG_OK=0
+OS_TYPE="unknown"
+if [ -f /etc/os-release ]; then
+    OS_TYPE="linux"
+    . /etc/os-release 2>/dev/null
+    DISTRO="${ID:-linux}"
+elif [[ "$(uname)" == "Darwin" ]]; then
+    OS_TYPE="macos"
+    DISTRO="macos"
+fi
 
-# Python
+# Helper: show install instructions per OS
+install_hint() {
+    local pkg="$1"
+    case "$pkg" in
+        python)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install python3.11 python3.11-venv python3-pip${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}brew install python@3.11${NC}"
+            else
+                dim "    Install: https://www.python.org/downloads/"
+            fi
+            ;;
+        node)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt install nodejs${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}brew install node@18${NC}"
+            else
+                dim "    Install: https://nodejs.org/"
+            fi
+            ;;
+        git)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install git${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}xcode-select --install${NC}"
+            fi
+            ;;
+        postgresql)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install postgresql && sudo systemctl start postgresql${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}brew install postgresql@15 && brew services start postgresql@15${NC}"
+            fi
+            dim "    Or Docker: ${W}docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:15${NC}"
+            ;;
+    esac
+}
+
+# ── Python ──
 if command -v python3 &>/dev/null; then
     PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
     PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
     if [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 11 ]; then
         ok "Python ${W}$PY_VER${NC}"
+
+        # Check venv module (Ubuntu requires python3.x-venv package)
+        if ! python3 -c "import venv" 2>/dev/null; then
+            fail "Python venv module not found"
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install python${PY_VER}-venv${NC}"
+            fi
+            MISSING=1
+        fi
+
+        # Check pip
+        if ! python3 -m pip --version &>/dev/null; then
+            fail "pip not found"
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install python3-pip${NC}"
+            fi
+            MISSING=1
+        fi
     else
         fail "Python ${W}3.11+${NC} required ${DIM}(found $PY_VER)${NC}"
+        install_hint python
         MISSING=1
     fi
 else
     fail "python3 not found"
+    install_hint python
     MISSING=1
 fi
 
-# Node
+# ── Node.js ──
 if command -v node &>/dev/null; then
-    ok "Node.js ${W}$(node --version)${NC}"
+    NODE_VER_RAW=$(node --version | sed 's/^v//')
+    NODE_MAJOR=$(echo "$NODE_VER_RAW" | cut -d. -f1)
+    if [ "$NODE_MAJOR" -ge 18 ]; then
+        ok "Node.js ${W}v${NODE_VER_RAW}${NC}"
+    else
+        fail "Node.js ${W}18+${NC} required ${DIM}(found v${NODE_VER_RAW})${NC}"
+        install_hint node
+        MISSING=1
+    fi
 else
-    fail "Node.js not found ${DIM}— https://nodejs.org${NC}"
+    fail "Node.js not found"
+    install_hint node
     MISSING=1
 fi
 
-# npm
+# ── npm ──
 if command -v npm &>/dev/null; then
     ok "npm ${W}$(npm --version)${NC}"
 else
-    fail "npm not found"
+    fail "npm not found ${DIM}(usually installed with Node.js)${NC}"
     MISSING=1
 fi
 
-# Git
+# ── Git ──
 if command -v git &>/dev/null; then
     ok "Git ${W}$(git --version | cut -d' ' -f3)${NC}"
 else
     fail "git not found"
+    install_hint git
     MISSING=1
 fi
 
-# PostgreSQL
+# ── PostgreSQL ──
 if command -v psql &>/dev/null; then
-    ok "PostgreSQL ${W}$(psql --version | grep -oE '[0-9]+\.[0-9]+')${NC}"
+    PG_VER=$(psql --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    PG_MAJOR=$(echo "$PG_VER" | cut -d. -f1)
+    if [ "$PG_MAJOR" -ge 14 ]; then
+        ok "PostgreSQL ${W}$PG_VER${NC}"
+    else
+        warn "PostgreSQL ${W}14+${NC} recommended ${DIM}(found $PG_VER)${NC}"
+    fi
     PG_OK=1
+
+    # Check if PostgreSQL is actually running
+    if command -v pg_isready &>/dev/null; then
+        if pg_isready -q 2>/dev/null; then
+            ok "PostgreSQL server ${W}running${NC}"
+        else
+            warn "PostgreSQL installed but ${Y}not running${NC}"
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Start: ${W}sudo systemctl start postgresql${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Start: ${W}brew services start postgresql@15${NC}"
+            fi
+        fi
+    fi
 elif command -v docker &>/dev/null; then
-    warn "psql not found — will use ${W}Docker${NC} for PostgreSQL"
+    ok "Docker ${W}$(docker --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)${NC}"
+    warn "PostgreSQL not found — will use ${W}Docker${NC} automatically"
     PG_OK=2
 else
-    fail "PostgreSQL not found"
+    fail "PostgreSQL and Docker both not found"
     echo ""
-    dim "  Install options:"
-    dim "    macOS:   brew install postgresql@15 && brew services start postgresql@15"
-    dim "    Ubuntu:  sudo apt install postgresql && sudo systemctl start postgresql"
-    dim "    Docker:  docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:15"
+    install_hint postgresql
     echo ""
     MISSING=1
 fi
@@ -183,6 +280,18 @@ fi
 if [ "$MISSING" -eq 1 ]; then
     echo ""
     fail "${BOLD}Missing prerequisites.${NC} Install them and try again."
+    if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+        echo ""
+        dim "  Quick install all (Ubuntu/Debian):"
+        dim "    ${W}sudo apt update && sudo apt install -y python3.11 python3.11-venv python3-pip git postgresql${NC}"
+        dim "    ${W}curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt install -y nodejs${NC}"
+        dim "    ${W}sudo systemctl start postgresql${NC}"
+    elif [ "$DISTRO" = "macos" ]; then
+        echo ""
+        dim "  Quick install all (macOS):"
+        dim "    ${W}brew install python@3.11 node@18 postgresql@15 git${NC}"
+        dim "    ${W}brew services start postgresql@15${NC}"
+    fi
     echo ""
     exit 1
 fi
