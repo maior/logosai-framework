@@ -281,6 +281,37 @@ Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `si
 
 [MIT](LICENSE) — Copyright (c) 2023-2026 LogosAI
 
+## Full Stack Quick Start
+
+Want the complete LogosAI platform (frontend + backend + agents)? Two options:
+
+### Option A: Docker (recommended — zero dependencies)
+
+```bash
+git clone https://github.com/maior/logosai-framework.git
+cd logosai-framework
+docker compose up
+```
+
+Open http://localhost:8010 and start chatting. That's it.
+
+### Option B: Local install
+
+```bash
+git clone https://github.com/maior/logosai-framework.git
+cd logosai-framework
+./quickstart.sh
+```
+
+Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+. The script clones all repos, installs dependencies, runs migrations, and starts all services.
+
+| Service | Port | What it does |
+|---------|------|-------------|
+| logos_web | 8010 | Next.js frontend — chat UI |
+| logos_api | 8090 | FastAPI backend — auth, streaming, memory |
+| ACP Server | 8888 | Agent runtime — executes agents |
+| PostgreSQL | 5432 | Database |
+
 ## Related Repositories
 
 | Repository | Description | URL |

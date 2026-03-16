@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm -rf /var/lib/apt/lists/*
+
+# Clone and install ontology
+RUN git clone --depth 1 https://github.com/maior/logosai-ontology.git /opt/ontology
+ENV PYTHONPATH="/opt/ontology:${PYTHONPATH}"
+
+# Clone and install logos_api
+RUN git clone --depth 1 https://github.com/maior/logosai-api.git /app
+
+# Install dependencies
+RUN pip install --no-cache-dir -e . 2>/dev/null || pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
+RUN pip install --no-cache-dir logosai uvicorn[standard]
+
+# Install ontology dependencies
+RUN pip install --no-cache-dir -r /opt/ontology/requirements.txt 2>/dev/null || true
+
+EXPOSE 8090
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8090"]

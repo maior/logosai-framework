@@ -1,0 +1,88 @@
+# LogosAI Full Stack — Docker Compose
+#
+# Usage:
+#   git clone https://github.com/maior/logosai-framework.git
+#   cd logosai-framework
+#   docker compose up
+#
+# Services:
+#   - PostgreSQL (5432)
+#   - ACP Server (8888) — sample agents
+#   - logos_api  (8090) — FastAPI backend
+#   - logos_web  (8010) — Next.js frontend
+#
+# Open http://localhost:8010 to start chatting.
+
+services:
+  # ── PostgreSQL ──
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: logosai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── ACP Server (Agent Runtime) ──
+  acp:
+    build:
+      context: .
+      dockerfile: Dockerfile.acp
+    ports:
+      - "8888:8888"
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8888/jsonrpc')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── logos_api (FastAPI Backend) ──
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8090:8090"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/logosai"
+      ACP_SERVER_URL: "http://acp:8888"
+      JWT_SECRET_KEY: "logosai-quickstart-secret-change-in-production"
+      CORS_ORIGINS: '["http://localhost:8010","http://localhost:3000"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      acp:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── logos_web (Next.js Frontend) ──
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "8010:8010"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8090"
+      NEXTAUTH_URL: "http://localhost:8010"
+      NEXTAUTH_SECRET: "logosai-quickstart-secret"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
