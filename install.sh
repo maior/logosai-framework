@@ -504,9 +504,18 @@ echo ""
 
 mkdir -p "$DIR/logs"
 
+kill_port() {
+    local port=$1
+    # Try fuser first (Linux), then lsof (macOS)
+    if command -v fuser &>/dev/null; then
+        fuser -k $port/tcp 2>/dev/null && sleep 1 || true
+    elif command -v lsof &>/dev/null; then
+        local pid=$(lsof -ti :$port 2>/dev/null || true)
+        [ -n "$pid" ] && kill $pid 2>/dev/null && sleep 1 || true
+    fi
+}
 for PORT in 8888 8090 8010; do
-    PID=$(lsof -ti :$PORT 2>/dev/null || true)
-    [ -n "$PID" ] && kill $PID 2>/dev/null && sleep 1
+    kill_port $PORT
 done
 
 # ACP server
