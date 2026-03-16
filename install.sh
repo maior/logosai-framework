@@ -349,35 +349,33 @@ fi
 source .venv/bin/activate
 ok "Python venv ${DIM}(.venv — $(python --version))${NC}"
 
-echo -ne "  ${DIM}Upgrading pip...${NC}\r"
-pip install --upgrade pip -q 2>/dev/null
-echo -ne "\r$(printf '%-60s' '')\r"
+info "Upgrading pip..."
+pip install --upgrade pip -q 2>&1 | tail -1
+echo ""
 
 # logosai framework
-echo -ne "  ${DIM}◇ Installing logosai framework...${NC}"
-pip install -e logosai-framework/ -q 2>/dev/null
-echo -ne "\r$(printf '%-60s' '')\r"
-ok "${W}logosai${NC} framework ${DIM}(pip install -e)${NC}"
+info "Installing logosai framework..."
+pip install -e logosai-framework/ --progress-bar on 2>&1 | grep -E "Installing|Successfully|Requirement|error|ERROR" | tail -5
+ok "${W}logosai${NC} framework"
 
 # ontology
 if [ -f logosai-ontology/requirements.txt ]; then
-    echo -ne "  ${DIM}◇ Installing ontology dependencies...${NC}"
-    pip install -r logosai-ontology/requirements.txt -q 2>/dev/null
-    echo -ne "\r$(printf '%-60s' '')\r"
+    info "Installing ontology dependencies..."
+    pip install -r logosai-ontology/requirements.txt --progress-bar on 2>&1 | grep -E "Installing|Successfully|Requirement|error|ERROR" | tail -5
     ok "${W}ontology${NC} dependencies"
 fi
 
 # logos_api
-echo -ne "  ${DIM}◇ Installing logos_api dependencies...${NC}"
-pip install -e logosai-api/ -q 2>/dev/null
-echo -ne "\r$(printf '%-60s' '')\r"
-ok "${W}logos_api${NC} dependencies ${DIM}(FastAPI, SQLAlchemy, etc.)${NC}"
+info "Installing logos_api dependencies..."
+dim "  (FastAPI, SQLAlchemy, asyncpg, etc. — this may take 1-2 minutes)"
+pip install -e logosai-api/ --progress-bar on 2>&1 | grep -E "Installing|Successfully|Requirement|Downloading|error|ERROR" | tail -10
+ok "${W}logos_api${NC} dependencies"
 
 # Node
-echo -ne "  ${DIM}◇ Running npm install for logos_web...${NC}"
-(cd logosai-web && npm install --silent 2>/dev/null)
-echo -ne "\r$(printf '%-60s' '')\r"
-ok "${W}logos_web${NC} dependencies ${DIM}(Next.js, React, Tailwind)${NC}"
+info "Installing logos_web dependencies..."
+dim "  (Next.js, React, Tailwind — this may take 1-2 minutes)"
+(cd logosai-web && npm install 2>&1 | tail -5)
+ok "${W}logos_web${NC} dependencies"
 
 echo ""
 info "All dependencies installed"
