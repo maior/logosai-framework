@@ -349,8 +349,8 @@ fi
 source .venv/bin/activate
 ok "Python venv ${DIM}(.venv — $(python --version))${NC}"
 
-info "Upgrading pip..."
-pip install --upgrade pip -q 2>&1 | tail -1
+info "Upgrading pip and build tools..."
+pip install --upgrade pip setuptools wheel hatchling -q 2>&1 | tail -1
 echo ""
 
 # logosai framework
