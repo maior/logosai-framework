@@ -1,99 +1,340 @@
 """
-Sample ACP Server — runs two agents (Hello + Calculator) on port 8888.
+LogosAI Sample ACP Server — 6 agents on port 8888.
 
-This is a minimal example of an ACP-compatible agent server that works
-with logos_api (https://github.com/maior/logosai-api).
+Agents:
+  - LLM Chat Agent      — General conversation (Gemini/OpenAI)
+  - Calculator Agent     — Math expressions
+  - Translation Agent    — Multi-language translation
+  - Code Agent           — Code generation and explanation
+  - Summarization Agent  — Text summarization
+  - Writing Agent        — Email, report, letter writing
 
 Requirements:
     pip install logosai
 
 Run:
     python sample_acp_server.py
-    # Then test: curl http://localhost:8888/jsonrpc -d '{"jsonrpc":"2.0","method":"list_agents","id":1}'
+    # Test: curl http://localhost:8888/jsonrpc -d '{"jsonrpc":"2.0","method":"list_agents","id":1}'
 
 For use with logos_api:
     1. Start this server: python sample_acp_server.py
-    2. Start logos_api:   uvicorn app.main:app --port 8090
-    3. Start logos_web:   npm run dev (port 8010)
+    2. Start logos_api:   cd logosai-api && uvicorn app.main:app --port 8090
+    3. Start logos_web:   cd logosai-web && npm run dev (port 8010)
 """
 
 import asyncio
 import re
 import json
+import os
+import time
+from datetime import datetime
 from aiohttp import web
 
 from logosai import LogosAIAgent, AgentConfig, AgentType, AgentResponse, AgentResponseType
 
+# Try to import LLMClient for smart agents
+try:
+    from logosai.utils.llm_client import LLMClient
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
 
-# ---- Sample Agents ----
 
-class HelloAgent(LogosAIAgent):
-    """Simple agent that greets the user."""
+# ═══════════════════════════════════════════
+# Helper: get LLM client
+# ═══════════════════════════════════════════
+def create_llm_client():
+    """Create LLM client from available API keys."""
+    if not LLM_AVAILABLE:
+        return None
+
+    google_key = os.getenv("GOOGLE_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+
+    if google_key:
+        return LLMClient(provider="google", model="gemini-2.5-flash-lite", temperature=0.7, max_tokens=4096)
+    elif openai_key:
+        return LLMClient(provider="openai", model="gpt-4.1-mini", temperature=0.7, max_tokens=4096)
+    return None
+
+
+# ═══════════════════════════════════════════
+# Agent 1: LLM Chat Agent
+# ═══════════════════════════════════════════
+class LLMChatAgent(LogosAIAgent):
+    """General-purpose conversational agent powered by LLM."""
 
     def __init__(self):
         config = AgentConfig(
-            name="Hello Agent",
+            name="LLM Chat Agent",
             agent_type=AgentType.CUSTOM,
-            description="A simple greeting agent that responds to any query",
+            description="General conversation, Q&A, knowledge queries, reasoning, and creative tasks. Handles any topic.",
         )
         super().__init__(config)
+        self.llm = None
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
 
     async def process(self, query: str, context=None) -> AgentResponse:
-        return AgentResponse(
-            type=AgentResponseType.SUCCESS,
-            content={"answer": f"Hello! You said: {query}"},
-            message="Greeting generated",
-        )
+        if not self.llm:
+            return AgentResponse(
+                type=AgentResponseType.ERROR,
+                content={"error": "No LLM API key configured. Set GOOGLE_API_KEY or OPENAI_API_KEY."},
+                message="LLM not available",
+            )
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            messages = [
+                {"role": "system", "content": f"You are LogosAI, a helpful AI assistant. Today is {today}. Answer clearly and concisely. Respond in the same language as the user's query."},
+                {"role": "user", "content": query},
+            ]
+            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
+            answer = response if isinstance(response, str) else str(response)
+            return AgentResponse(
+                type=AgentResponseType.SUCCESS,
+                content={"answer": answer},
+                message="Response generated",
+            )
+        except asyncio.TimeoutError:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": "LLM request timed out"}, message="Timeout")
+        except Exception as e:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="LLM error")
 
 
+# ═══════════════════════════════════════════
+# Agent 2: Calculator Agent
+# ═══════════════════════════════════════════
 class CalculatorAgent(LogosAIAgent):
-    """Simple calculator agent that evaluates math expressions."""
+    """Calculator agent that evaluates math expressions."""
 
     def __init__(self):
         config = AgentConfig(
             name="Calculator Agent",
             agent_type=AgentType.CUSTOM,
-            description="Evaluates arithmetic expressions safely (add, subtract, multiply, divide)",
+            description="Evaluates arithmetic expressions: addition, subtraction, multiplication, division, percentages, and unit conversions.",
         )
         super().__init__(config)
+        self.llm = None
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
 
     async def process(self, query: str, context=None) -> AgentResponse:
-        expr = re.sub(r"[^0-9+\-*/().\s]", "", query)
-        if not expr.strip():
-            return AgentResponse(
-                type=AgentResponseType.ERROR,
-                content={"error": "No valid math expression found"},
-                message="Parse error",
-            )
+        # Try direct evaluation first
+        expr = re.sub(r"[^0-9+\-*/().\s%]", "", query)
+        if expr.strip():
+            try:
+                clean_expr = expr.replace("%", "/100")
+                result = eval(clean_expr, {"__builtins__": {}}, {})
+                return AgentResponse(
+                    type=AgentResponseType.SUCCESS,
+                    content={"answer": f"{expr.strip()} = {result}"},
+                    message="Calculation complete",
+                )
+            except Exception:
+                pass
+
+        # Fall back to LLM for complex math queries
+        if self.llm:
+            try:
+                messages = [
+                    {"role": "system", "content": "You are a math assistant. Solve the problem step by step. Show the calculation and final answer. Respond in the same language as the user."},
+                    {"role": "user", "content": query},
+                ]
+                response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=15)
+                answer = response if isinstance(response, str) else str(response)
+                return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Calculation complete")
+            except Exception:
+                pass
+
+        return AgentResponse(type=AgentResponseType.ERROR, content={"error": "Could not evaluate expression"}, message="Parse error")
+
+
+# ═══════════════════════════════════════════
+# Agent 3: Translation Agent
+# ═══════════════════════════════════════════
+class TranslationAgent(LogosAIAgent):
+    """Multi-language translation agent."""
+
+    def __init__(self):
+        config = AgentConfig(
+            name="Translation Agent",
+            agent_type=AgentType.CUSTOM,
+            description="Translates text between languages: English, Korean, Japanese, Chinese, Spanish, French, German, and more.",
+        )
+        super().__init__(config)
+        self.llm = None
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
+
+    async def process(self, query: str, context=None) -> AgentResponse:
+        if not self.llm:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": "LLM not available"}, message="No LLM")
         try:
-            result = eval(expr, {"__builtins__": {}}, {})
-            return AgentResponse(
-                type=AgentResponseType.SUCCESS,
-                content={"answer": f"{expr.strip()} = {result}"},
-                message="Calculation complete",
-            )
+            messages = [
+                {"role": "system", "content": "You are a professional translator. Detect the source language and translate to the requested target language. If no target is specified, translate Korean to English or English to Korean. Preserve tone and nuance."},
+                {"role": "user", "content": query},
+            ]
+            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=20)
+            answer = response if isinstance(response, str) else str(response)
+            return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Translation complete")
         except Exception as e:
-            return AgentResponse(
-                type=AgentResponseType.ERROR,
-                content={"error": str(e)},
-                message="Calculation failed",
-            )
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Translation error")
 
 
-# ---- Agent Registry ----
+# ═══════════════════════════════════════════
+# Agent 4: Code Agent
+# ═══════════════════════════════════════════
+class CodeAgent(LogosAIAgent):
+    """Code generation and explanation agent."""
+
+    def __init__(self):
+        config = AgentConfig(
+            name="Code Agent",
+            agent_type=AgentType.CUSTOM,
+            description="Generates, explains, debugs, and reviews code. Supports Python, JavaScript, TypeScript, Java, Go, SQL, and more.",
+        )
+        super().__init__(config)
+        self.llm = None
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
+
+    async def process(self, query: str, context=None) -> AgentResponse:
+        if not self.llm:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": "LLM not available"}, message="No LLM")
+        try:
+            messages = [
+                {"role": "system", "content": "You are an expert software engineer. Write clean, well-commented code. Explain your approach briefly. Use markdown code blocks with language tags. Respond in the same language as the user's query."},
+                {"role": "user", "content": query},
+            ]
+            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
+            answer = response if isinstance(response, str) else str(response)
+            return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Code generated")
+        except Exception as e:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Code error")
+
+
+# ═══════════════════════════════════════════
+# Agent 5: Summarization Agent
+# ═══════════════════════════════════════════
+class SummarizationAgent(LogosAIAgent):
+    """Text summarization agent."""
+
+    def __init__(self):
+        config = AgentConfig(
+            name="Summarization Agent",
+            agent_type=AgentType.CUSTOM,
+            description="Summarizes long text, articles, documents, and reports into concise bullet points or paragraphs.",
+        )
+        super().__init__(config)
+        self.llm = None
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
+
+    async def process(self, query: str, context=None) -> AgentResponse:
+        if not self.llm:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": "LLM not available"}, message="No LLM")
+        try:
+            messages = [
+                {"role": "system", "content": "You are a summarization expert. Provide clear, structured summaries. Use bullet points for key findings. Keep it concise. Respond in the same language as the input text."},
+                {"role": "user", "content": f"Summarize the following:\n\n{query}"},
+            ]
+            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
+            answer = response if isinstance(response, str) else str(response)
+            return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Summary generated")
+        except Exception as e:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Summarization error")
+
+
+# ═══════════════════════════════════════════
+# Agent 6: Writing Agent
+# ═══════════════════════════════════════════
+class WritingAgent(LogosAIAgent):
+    """Professional writing assistant."""
+
+    def __init__(self):
+        config = AgentConfig(
+            name="Writing Agent",
+            agent_type=AgentType.CUSTOM,
+            description="Writes emails, reports, proposals, letters, blog posts, and other professional documents.",
+        )
+        super().__init__(config)
+        self.llm = None
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
+
+    async def process(self, query: str, context=None) -> AgentResponse:
+        if not self.llm:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": "LLM not available"}, message="No LLM")
+        try:
+            messages = [
+                {"role": "system", "content": "You are a professional writer. Write well-structured, polished content appropriate for the requested format (email, report, proposal, etc.). Match the formality level to the context. Respond in the same language as the user's query."},
+                {"role": "user", "content": query},
+            ]
+            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
+            answer = response if isinstance(response, str) else str(response)
+            return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Writing complete")
+        except Exception as e:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Writing error")
+
+
+# ═══════════════════════════════════════════
+# Agent Registry
+# ═══════════════════════════════════════════
 AGENTS = {}
 
 
 async def _load_agents():
-    agents = [HelloAgent(), CalculatorAgent()]
+    agents = [
+        LLMChatAgent(),
+        CalculatorAgent(),
+        TranslationAgent(),
+        CodeAgent(),
+        SummarizationAgent(),
+        WritingAgent(),
+    ]
+
     for a in agents:
         await a.initialize()
         agent_id = a.config.name.lower().replace(" ", "_")
         AGENTS[agent_id] = a
-    print(f"Loaded {len(AGENTS)} agents: {list(AGENTS.keys())}")
+
+    llm_status = "with LLM" if LLM_AVAILABLE and create_llm_client() else "without LLM (set GOOGLE_API_KEY)"
+    print(f"Loaded {len(AGENTS)} agents ({llm_status}): {list(AGENTS.keys())}")
 
 
-# ---- JSON-RPC Handler ----
+# ═══════════════════════════════════════════
+# JSON-RPC Handler
+# ═══════════════════════════════════════════
 async def jsonrpc_handler(request: web.Request) -> web.Response:
     body = await request.json()
     method = body.get("method", "")
@@ -131,12 +372,16 @@ async def jsonrpc_handler(request: web.Request) -> web.Response:
     )
 
 
-# ---- SSE Stream Handler (logos_api compatible) ----
+# ═══════════════════════════════════════════
+# SSE Stream Handler (logos_api compatible)
+# ═══════════════════════════════════════════
 async def stream_handler(request: web.Request) -> web.StreamResponse:
     """SSE streaming endpoint compatible with logos_api's ACP client."""
     body = await request.json()
     query = body.get("query", "")
+    agent_query = body.get("agent_query", query)
     sessionid = body.get("sessionid", "default")
+    requested_agents = body.get("agents", [])
 
     response = web.StreamResponse()
     response.content_type = "text/event-stream"
@@ -144,47 +389,96 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
     response.headers["X-Accel-Buffering"] = "no"
     await response.prepare(request)
 
+    start_time = time.time()
+
     async def send_event(event_type: str, data: dict):
         payload = json.dumps(data, ensure_ascii=False)
         await response.write(f"event: {event_type}\ndata: {payload}\n\n".encode())
 
-    # Send initialization
+    # Initialization
     await send_event("initialization", {"message": "System initializing", "session_id": sessionid})
 
-    # Select first available agent (simple selection)
-    agent_id = list(AGENTS.keys())[0] if AGENTS else None
+    # Select agent — use requested agent or find best match
+    agent_id = None
+    if requested_agents:
+        for ra in requested_agents:
+            aid = ra.get("agent_id", "") if isinstance(ra, dict) else str(ra)
+            if aid in AGENTS:
+                agent_id = aid
+                break
+
+    # Fallback: simple keyword matching to pick best agent
     if not agent_id:
-        await send_event("error", {"message": "No agents available"})
-        return response
+        q_lower = query.lower()
+        if any(kw in q_lower for kw in ["계산", "더하기", "빼기", "곱하기", "나누기", "calculate", "+", "-", "*", "/"]):
+            agent_id = "calculator_agent"
+        elif any(kw in q_lower for kw in ["번역", "translate", "영어로", "한국어로", "일본어"]):
+            agent_id = "translation_agent"
+        elif any(kw in q_lower for kw in ["코드", "code", "프로그램", "함수", "python", "javascript", "function", "class"]):
+            agent_id = "code_agent"
+        elif any(kw in q_lower for kw in ["요약", "summarize", "summary", "정리"]):
+            agent_id = "summarization_agent"
+        elif any(kw in q_lower for kw in ["작성", "이메일", "보고서", "write", "email", "report", "letter"]):
+            agent_id = "writing_agent"
+        else:
+            agent_id = "llm_chat_agent"  # Default to general chat
+
+    if agent_id not in AGENTS:
+        agent_id = "llm_chat_agent"
 
     agent = AGENTS[agent_id]
-    await send_event("agent_started", {"agent_id": agent_id, "agent_name": agent.config.name})
+
+    # Agent selection event
+    await send_event("agents_selected", {
+        "agents": [{"agent_id": agent_id, "agent_name": agent.config.name}],
+    })
+
+    # Agent started
+    await send_event("agent_started", {
+        "agent_id": agent_id,
+        "agent_name": agent.config.name,
+    })
 
     # Execute agent
-    result = await agent.process(query)
+    use_query = agent_query if agent_query != query else query
+    result = await agent.process(use_query)
+    exec_time = round(time.time() - start_time, 2)
+
+    # Agent completed
     await send_event("agent_completed", {
         "agent_id": agent_id,
         "agent_name": agent.config.name,
         "result": result.content,
+        "execution_time": exec_time,
     })
 
-    # Send final result
+    # Final result
+    answer = result.content.get("answer", result.content.get("error", str(result.content)))
     await send_event("final_result", {
-        "code": 0,
+        "code": 0 if result.type == AgentResponseType.SUCCESS else 1,
         "data": {
-            "result": result.content.get("answer", str(result.content)),
+            "result": answer,
             "agent_results": [{
                 "agent_id": agent_id,
                 "agent_name": agent.config.name,
                 "result": result.content,
                 "confidence": 0.9,
+                "execution_time": exec_time,
             }],
+            "metadata": {
+                "total_agents": 1,
+                "successful_agents": 1 if result.type == AgentResponseType.SUCCESS else 0,
+                "execution_time": exec_time,
+            },
         },
     })
 
     return response
 
 
+# ═══════════════════════════════════════════
+# App Setup
+# ═══════════════════════════════════════════
 async def init_app():
     await _load_agents()
     app = web.Application()
@@ -195,8 +489,10 @@ async def init_app():
 
 if __name__ == "__main__":
     PORT = 8888
-    print(f"Starting sample ACP server on http://localhost:{PORT}")
-    print(f"  JSON-RPC: POST http://localhost:{PORT}/jsonrpc")
-    print(f"  SSE Stream: POST http://localhost:{PORT}/stream/multi")
+    print(f"Starting LogosAI ACP server on http://localhost:{PORT}")
+    print(f"  JSON-RPC:    POST http://localhost:{PORT}/jsonrpc")
+    print(f"  SSE Stream:  POST http://localhost:{PORT}/stream/multi")
+    print(f"  Agents:      6 (Chat, Calculator, Translation, Code, Summary, Writing)")
     print(f"  Test: curl http://localhost:{PORT}/jsonrpc -d '{{\"jsonrpc\":\"2.0\",\"method\":\"list_agents\",\"id\":1}}'")
+    print()
     web.run_app(init_app(), port=PORT)
