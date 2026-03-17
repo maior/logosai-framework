@@ -1237,6 +1237,85 @@ MONITOREOF
 chmod +x "$WORKDIR/monitor.sh"
 ok "${W}monitor.sh${NC} — live service monitor"
 
+# ── update.sh ─────────────────────────────
+cat > "$WORKDIR/update.sh" << 'UPDATEEOF'
+#!/usr/bin/env bash
+#
+# LogosAI — Update all components
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+G='\033[0;32m'; R='\033[0;31m'; B='\033[0;34m'; P='\033[0;35m'; C='\033[0;36m'
+W='\033[1;37m'; NC='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
+
+echo ""
+echo -e "${P}  ╔══════════════════════════════════════╗${NC}"
+echo -e "${P}  ║${NC}  ${BOLD}LogosAI${NC} — Updating                   ${P}║${NC}"
+echo -e "${P}  ╚══════════════════════════════════════╝${NC}"
+echo ""
+
+# Stop services first
+if [ -f "$DIR/stop.sh" ]; then
+    echo -e "  ${DIM}Stopping services...${NC}"
+    bash "$DIR/stop.sh" 2>/dev/null
+fi
+
+# Pull latest code for all repos
+REPOS="logosai-framework logosai-ontology logosai-api logosai-web"
+for repo in $REPOS; do
+    if [ -d "$DIR/$repo" ]; then
+        echo -ne "  ${DIM}Updating $repo...${NC}\r"
+        (cd "$DIR/$repo" && git pull --ff-only -q 2>/dev/null) \
+            && echo -e "  ${G}●${NC} ${W}$repo${NC} updated" \
+            || echo -e "  ${R}●${NC} ${W}$repo${NC} update failed (local changes?)"
+    fi
+done
+
+echo ""
+
+# Update Python dependencies
+if [ -d "$DIR/.venv" ]; then
+    source "$DIR/.venv/bin/activate"
+    echo -ne "  ${DIM}Updating Python packages...${NC}\r"
+    pip install -e "$DIR/logosai-framework/" -q 2>&1 | grep -iE "error" | head -3
+    pip install -e "$DIR/logosai-api/" -q 2>&1 | grep -iE "error" | head -3
+    if [ -f "$DIR/logosai-ontology/requirements.txt" ]; then
+        pip install -r "$DIR/logosai-ontology/requirements.txt" -q 2>&1 | grep -iE "error" | head -3
+    fi
+    echo -e "  ${G}●${NC} Python packages updated"
+fi
+
+# Update Node dependencies
+if [ -d "$DIR/logosai-web/node_modules" ]; then
+    echo -ne "  ${DIM}Updating Node packages...${NC}\r"
+    (cd "$DIR/logosai-web" && npm install --loglevel=error 2>&1 | grep -iE "error|ERR" | head -3)
+    echo -e "  ${G}●${NC} Node packages updated"
+fi
+
+# Run migrations
+echo -ne "  ${DIM}Running migrations...${NC}\r"
+(cd "$DIR/logosai-api" && "$DIR/.venv/bin/python" -m alembic upgrade head 2>/dev/null) \
+    && echo -e "  ${G}●${NC} Database migrations complete" \
+    || echo -e "  ${R}●${NC} Migration failed — check logs"
+
+# Regenerate management scripts (start.sh, stop.sh, etc.)
+echo ""
+echo -ne "  ${DIM}Regenerating scripts...${NC}\r"
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh \
+    | LOGOSAI_DIR="$DIR" bash -s -- --scripts-only 2>/dev/null \
+    || echo -e "  ${DIM}Scripts regeneration skipped (run install.sh to update)${NC}"
+
+echo ""
+echo -e "${G}  ╔══════════════════════════════════════╗${NC}"
+echo -e "${G}  ║${NC}  ${BOLD}Update complete!${NC}                     ${G}║${NC}"
+echo -e "${G}  ╚══════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  ${W}Start:${NC}  ./start.sh"
+echo ""
+UPDATEEOF
+chmod +x "$WORKDIR/update.sh"
+ok "${W}update.sh${NC} — update all components"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Complete
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
