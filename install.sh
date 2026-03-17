@@ -951,10 +951,13 @@ echo -e "  ${W}Logs:${NC}      ${DIM}$DIR/logs/${NC}"
 echo -e "  ${W}Stop:${NC}      ${DIM}./stop.sh${NC}"
 echo ""
 
-if command -v open &>/dev/null; then
-    open "http://localhost:8010" 2>/dev/null || true
-elif command -v xdg-open &>/dev/null; then
-    xdg-open "http://localhost:8010" 2>/dev/null || true
+# Open browser only on local desktop (not SSH/headless servers)
+if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+    if command -v open &>/dev/null; then
+        open "http://localhost:8010" 2>/dev/null || true
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "http://localhost:8010" 2>/dev/null || true
+    fi
 fi
 STARTEOF
 chmod +x "$WORKDIR/start.sh"
