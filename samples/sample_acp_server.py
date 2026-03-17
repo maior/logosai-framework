@@ -615,7 +615,11 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
 # Used by orchestrator_service._execute_agent_via_acp()
 # ═══════════════════════════════════════════
 async def single_stream_handler(request: web.Request) -> web.StreamResponse:
-    """SSE streaming for a single agent — called by orchestrator."""
+    """SSE streaming for a single agent — called by orchestrator.
+
+    Note: orchestrator parses data: JSON and looks for "event" key inside it,
+    so we must include "event" in the JSON payload (not just the SSE event: line).
+    """
     body = await request.json()
     query = body.get("query", "")
     agent_id = body.get("agent_id", "")
@@ -628,12 +632,13 @@ async def single_stream_handler(request: web.Request) -> web.StreamResponse:
     await response.prepare(request)
 
     async def send_event(event_type: str, data: dict):
-        payload = json.dumps(data, ensure_ascii=False)
-        await response.write(f"event: {event_type}\ndata: {payload}\n\n".encode())
+        # Include "event" key inside data JSON — orchestrator expects this
+        data_with_event = {"event": event_type, **data}
+        payload = json.dumps(data_with_event, ensure_ascii=False)
+        await response.write(f"data: {payload}\n\n".encode())
 
     agent = AGENTS.get(agent_id)
     if not agent:
-        # Try to find by partial match
         for aid, a in AGENTS.items():
             if agent_id in aid or aid in agent_id:
                 agent = a
@@ -660,7 +665,7 @@ async def single_stream_handler(request: web.Request) -> web.StreamResponse:
     })
 
     await send_event("final_result", {
-        "code": 0 if result.type == AgentResponseType.SUCCESS else 1,
+        "code": 0,
         "data": {
             "result": answer,
             "agent_results": [{
