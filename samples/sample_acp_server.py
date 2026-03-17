@@ -58,6 +58,26 @@ def create_llm_client():
     return None
 
 
+async def llm_call_with_retry(llm, messages, timeout=30, max_retries=3):
+    """Call LLM with automatic retry on 503/overload errors."""
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = await asyncio.wait_for(llm.invoke_messages(messages), timeout=timeout)
+            return response if isinstance(response, str) else str(response)
+        except asyncio.TimeoutError:
+            last_error = "Request timed out"
+        except Exception as e:
+            last_error = str(e)
+            if "503" in last_error or "UNAVAILABLE" in last_error or "overload" in last_error.lower():
+                wait = attempt * 2  # 2s, 4s, 6s
+                print(f"  [retry] LLM 503 — waiting {wait}s (attempt {attempt}/{max_retries})")
+                await asyncio.sleep(wait)
+                continue
+            raise  # Non-retryable error
+    raise Exception(f"LLM failed after {max_retries} retries: {last_error}")
+
+
 # ═══════════════════════════════════════════
 # Agent 1: LLM Chat Agent
 # ═══════════════════════════════════════════
@@ -93,15 +113,12 @@ class LLMChatAgent(LogosAIAgent):
                 {"role": "system", "content": f"You are LogosAI, a helpful AI assistant. Today is {today}. Answer clearly and concisely. Respond in the same language as the user's query."},
                 {"role": "user", "content": query},
             ]
-            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
-            answer = response if isinstance(response, str) else str(response)
+            answer = await llm_call_with_retry(self.llm, messages, timeout=30)
             return AgentResponse(
                 type=AgentResponseType.SUCCESS,
                 content={"answer": answer},
                 message="Response generated",
             )
-        except asyncio.TimeoutError:
-            return AgentResponse(type=AgentResponseType.ERROR, content={"error": "LLM request timed out"}, message="Timeout")
         except Exception as e:
             return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="LLM error")
 
@@ -150,8 +167,7 @@ class CalculatorAgent(LogosAIAgent):
                     {"role": "system", "content": "You are a math assistant. Solve the problem step by step. Show the calculation and final answer. Respond in the same language as the user."},
                     {"role": "user", "content": query},
                 ]
-                response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=15)
-                answer = response if isinstance(response, str) else str(response)
+                answer = await llm_call_with_retry(self.llm, messages, timeout=15)
                 return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Calculation complete")
             except Exception:
                 pass
@@ -189,8 +205,8 @@ class TranslationAgent(LogosAIAgent):
                 {"role": "system", "content": "You are a professional translator. Detect the source language and translate to the requested target language. If no target is specified, translate Korean to English or English to Korean. Preserve tone and nuance."},
                 {"role": "user", "content": query},
             ]
-            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=20)
-            answer = response if isinstance(response, str) else str(response)
+            answer = await llm_call_with_retry(self.llm, messages, timeout=20)
+
             return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Translation complete")
         except Exception as e:
             return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Translation error")
@@ -226,8 +242,8 @@ class CodeAgent(LogosAIAgent):
                 {"role": "system", "content": "You are an expert software engineer. Write clean, well-commented code. Explain your approach briefly. Use markdown code blocks with language tags. Respond in the same language as the user's query."},
                 {"role": "user", "content": query},
             ]
-            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
-            answer = response if isinstance(response, str) else str(response)
+            answer = await llm_call_with_retry(self.llm, messages, timeout=30)
+
             return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Code generated")
         except Exception as e:
             return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Code error")
@@ -263,8 +279,8 @@ class SummarizationAgent(LogosAIAgent):
                 {"role": "system", "content": "You are a summarization expert. Provide clear, structured summaries. Use bullet points for key findings. Keep it concise. Respond in the same language as the input text."},
                 {"role": "user", "content": f"Summarize the following:\n\n{query}"},
             ]
-            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
-            answer = response if isinstance(response, str) else str(response)
+            answer = await llm_call_with_retry(self.llm, messages, timeout=30)
+
             return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Summary generated")
         except Exception as e:
             return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Summarization error")
@@ -300,8 +316,8 @@ class WritingAgent(LogosAIAgent):
                 {"role": "system", "content": "You are a professional writer. Write well-structured, polished content appropriate for the requested format (email, report, proposal, etc.). Match the formality level to the context. Respond in the same language as the user's query."},
                 {"role": "user", "content": query},
             ]
-            response = await asyncio.wait_for(self.llm.invoke_messages(messages), timeout=30)
-            answer = response if isinstance(response, str) else str(response)
+            answer = await llm_call_with_retry(self.llm, messages, timeout=30)
+
             return AgentResponse(type=AgentResponseType.SUCCESS, content={"answer": answer}, message="Writing complete")
         except Exception as e:
             return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Writing error")
