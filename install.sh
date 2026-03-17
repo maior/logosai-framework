@@ -856,6 +856,205 @@ STATUSEOF
 chmod +x "$WORKDIR/status.sh"
 ok "${W}status.sh${NC} — check service status"
 
+# ── monitor.sh ────────────────────────────
+cat > "$WORKDIR/monitor.sh" << 'MONITOREOF'
+#!/usr/bin/env bash
+#
+# LogosAI — Live Service Monitor
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Colors
+G='\033[0;32m'; R='\033[0;31m'; Y='\033[1;33m'; B='\033[0;34m'
+P='\033[0;35m'; C='\033[0;36m'; W='\033[1;37m'; NC='\033[0m'
+BOLD='\033[1m'; DIM='\033[2m'
+
+# Service definitions
+declare -A SERVICES=(
+    [acp]="ACP Server|8888|logosai-framework/samples"
+    [api]="logos_api|8090|logosai-api"
+    [web]="logos_web|8010|logosai-web"
+)
+SERVICE_ORDER=(acp api web)
+
+# Get terminal dimensions
+update_size() {
+    COLS=$(tput cols 2>/dev/null || echo 80)
+    ROWS=$(tput lines 2>/dev/null || echo 24)
+}
+
+# Get service status
+get_status() {
+    local svc="$1"
+    local pidfile="$DIR/logs/${svc}.pid"
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
+        echo "running"
+    else
+        echo "stopped"
+    fi
+}
+
+# Get uptime
+get_uptime() {
+    local svc="$1"
+    local pidfile="$DIR/logs/${svc}.pid"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            local start_time=$(stat -c %Y "$pidfile" 2>/dev/null || stat -f %m "$pidfile" 2>/dev/null)
+            if [ -n "$start_time" ]; then
+                local now=$(date +%s)
+                local elapsed=$((now - start_time))
+                local h=$((elapsed / 3600))
+                local m=$(((elapsed % 3600) / 60))
+                local s=$((elapsed % 60))
+                if [ "$h" -gt 0 ]; then
+                    echo "${h}h ${m}m"
+                elif [ "$m" -gt 0 ]; then
+                    echo "${m}m ${s}s"
+                else
+                    echo "${s}s"
+                fi
+                return
+            fi
+        fi
+    fi
+    echo "-"
+}
+
+# HTTP health check
+check_http() {
+    local port="$1"
+    local code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://localhost:${port}" 2>/dev/null || echo "000")
+    echo "$code"
+}
+
+# Draw header
+draw_header() {
+    clear
+    echo -e "${P}"
+    echo "  ╔══════════════════════════════════════════════════════════╗"
+    echo -e "  ║${NC}  ${BOLD}LogosAI${NC}  ${DIM}Live Service Monitor${NC}           ${DIM}$(date '+%H:%M:%S')${NC}  ${P}║${NC}"
+    echo -e "${P}  ╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+# Draw service status panel
+draw_services() {
+    echo -e "  ${DIM}─── Services ───────────────────────────────────────────${NC}"
+    echo ""
+
+    for svc in "${SERVICE_ORDER[@]}"; do
+        IFS='|' read -r name port path <<< "${SERVICES[$svc]}"
+        local status=$(get_status "$svc")
+        local uptime=$(get_uptime "$svc")
+        local pid=$(cat "$DIR/logs/${svc}.pid" 2>/dev/null || echo "-")
+        local http=$(check_http "$port")
+
+        local status_icon=""
+        local status_color=""
+        if [ "$status" = "running" ]; then
+            status_icon="●"
+            status_color="$G"
+            if [ "$http" = "000" ]; then
+                status_icon="◐"
+                status_color="$Y"
+            fi
+        else
+            status_icon="■"
+            status_color="$R"
+            uptime="-"
+            pid="-"
+        fi
+
+        printf "  ${status_color}${status_icon}${NC}  %-14s ${B}:%s${NC}   ${DIM}PID %-8s  Up %-10s  HTTP %s${NC}\n" \
+            "$name" "$port" "$pid" "$uptime" "$http"
+    done
+
+    echo ""
+}
+
+# Draw recent logs
+draw_logs() {
+    local log_lines=$((ROWS - 14))
+    [ "$log_lines" -lt 5 ] && log_lines=5
+
+    echo -e "  ${DIM}─── Recent Logs ────────────────────────────────────────${NC}"
+    echo ""
+
+    # Merge and sort recent log lines with labels
+    (
+        [ -f "$DIR/logs/acp.log" ] && tail -20 "$DIR/logs/acp.log" 2>/dev/null | while read -r line; do echo -e "  ${G}ACP${NC} │ $line"; done
+        [ -f "$DIR/logs/api.log" ] && tail -20 "$DIR/logs/api.log" 2>/dev/null | while read -r line; do echo -e "  ${B}API${NC} │ $line"; done
+        [ -f "$DIR/logs/web.log" ] && tail -20 "$DIR/logs/web.log" 2>/dev/null | while read -r line; do echo -e "  ${C}WEB${NC} │ $line"; done
+    ) | tail -${log_lines}
+
+    echo ""
+    echo -e "  ${DIM}Press ${W}q${NC}${DIM} to quit  │  ${W}r${NC}${DIM} to refresh  │  ${W}1${NC}${DIM}/${W}2${NC}${DIM}/${W}3${NC}${DIM} for ACP/API/Web logs  │  Auto-refresh: 5s${NC}"
+}
+
+# Draw single service log
+draw_single_log() {
+    local svc="$1"
+    IFS='|' read -r name port path <<< "${SERVICES[$svc]}"
+    local log_lines=$((ROWS - 8))
+    [ "$log_lines" -lt 5 ] && log_lines=5
+
+    echo -e "  ${DIM}─── ${W}${name}${NC}${DIM} Logs (port ${port}) ─────────────────────────────${NC}"
+    echo ""
+
+    if [ -f "$DIR/logs/${svc}.log" ]; then
+        tail -${log_lines} "$DIR/logs/${svc}.log" 2>/dev/null | while read -r line; do
+            echo "  $line"
+        done
+    else
+        echo -e "  ${DIM}No log file found${NC}"
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Press ${W}0${NC}${DIM} for overview  │  ${W}q${NC}${DIM} to quit  │  ${W}r${NC}${DIM} to refresh  │  Auto-refresh: 3s${NC}"
+}
+
+# Main loop
+VIEW="overview"  # overview, acp, api, web
+REFRESH=5
+
+trap 'tput cnorm 2>/dev/null; exit 0' INT TERM
+tput civis 2>/dev/null  # Hide cursor
+
+while true; do
+    update_size
+    draw_header
+
+    case "$VIEW" in
+        overview)
+            REFRESH=5
+            draw_services
+            draw_logs
+            ;;
+        acp|api|web)
+            REFRESH=3
+            draw_services
+            draw_single_log "$VIEW"
+            ;;
+    esac
+
+    # Wait for input or timeout
+    if read -t $REFRESH -n 1 key 2>/dev/null; then
+        case "$key" in
+            q|Q) tput cnorm 2>/dev/null; echo ""; exit 0 ;;
+            r|R) continue ;;
+            0)   VIEW="overview" ;;
+            1)   VIEW="acp" ;;
+            2)   VIEW="api" ;;
+            3)   VIEW="web" ;;
+        esac
+    fi
+done
+MONITOREOF
+chmod +x "$WORKDIR/monitor.sh"
+ok "${W}monitor.sh${NC} — live service monitor"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Complete
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
