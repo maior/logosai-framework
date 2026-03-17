@@ -477,14 +477,14 @@ if ! grep -q "^GOOGLE_API_KEY=.\+" logosai-api/.env 2>/dev/null; then
     _needs_key_setup=true
 fi
 
-if [ "$_needs_key_setup" = true ] && [ -e /dev/tty ]; then
+# ── Configuration Setup ──
+if [ -e /dev/tty ]; then
     echo ""
-    info "API Key Setup ${DIM}(press Enter to skip any)${NC}"
-    dim "  Keys are saved to logosai-api/.env"
+    info "Configuration ${DIM}(press Enter to skip / keep default)${NC}"
     echo ""
 
     set_env_key() {
-        local key="$1" value="$2" file="logosai-api/.env"
+        local key="$1" value="$2" file="$3"
         if grep -q "^${key}=" "$file" 2>/dev/null; then
             sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
         else
@@ -493,40 +493,72 @@ if [ "$_needs_key_setup" = true ] && [ -e /dev/tty ]; then
         rm -f "${file}.bak"
     }
 
-    # Google API Key (Gemini) — primary LLM for orchestration
-    CURRENT_GOOGLE=$(grep "^GOOGLE_API_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
-    if [ -z "$CURRENT_GOOGLE" ] || [ "$CURRENT_GOOGLE" = "your-google-api-key" ]; then
-        ask "  ${C}◆${NC} Google API Key ${DIM}(for Gemini — recommended):${NC} " INPUT_GOOGLE
-        if [ -n "$INPUT_GOOGLE" ]; then
-            set_env_key "GOOGLE_API_KEY" "$INPUT_GOOGLE"
-            ok "Google API Key saved"
-        else
-            dim "  Skipped — set GOOGLE_API_KEY in logosai-api/.env later"
+    # Helper: ask for a config value if it's a placeholder or empty
+    ask_config() {
+        local key="$1" label="$2" file="$3" required="$4"
+        local current=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+        # Skip if already set with a real value
+        if [ -n "$current" ] && ! echo "$current" | grep -qE "^your-|^generate-"; then
+            return
         fi
+        local marker=""
+        [ "$required" = "required" ] && marker="${Y}*${NC}" || marker="${DIM}optional${NC}"
+        ask "  ${C}◆${NC} ${label} [${marker}]: " _INPUT
+        if [ -n "$_INPUT" ]; then
+            set_env_key "$key" "$_INPUT" "$file"
+            ok "${label} saved"
+        else
+            if [ "$required" = "required" ]; then
+                dim "  Skipped — set ${key} in $(basename $file) later"
+            fi
+        fi
+    }
+
+    # ── Database ──
+    dim "  ── Database ──"
+    ask_config "DATABASE_URL" "Database URL" "logosai-api/.env" "required"
+
+    echo ""
+
+    # ── LLM API Keys ──
+    dim "  ── LLM API Keys ──"
+    ask_config "GOOGLE_API_KEY" "Google API Key (Gemini)" "logosai-api/.env" "required"
+    ask_config "OPENAI_API_KEY" "OpenAI API Key" "logosai-api/.env" "optional"
+    ask_config "ANTHROPIC_API_KEY" "Anthropic API Key" "logosai-api/.env" "optional"
+
+    echo ""
+
+    # ── Google OAuth (for login) ──
+    dim "  ── Google OAuth (for login) ──"
+    ask_config "GOOGLE_CLIENT_ID" "Google Client ID" "logosai-api/.env" "required"
+    # Set the same Client ID in logos_web too
+    ENTERED_CLIENT_ID=$(grep "^GOOGLE_CLIENT_ID=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -n "$ENTERED_CLIENT_ID" ] && ! echo "$ENTERED_CLIENT_ID" | grep -q "^your-"; then
+        set_env_key "GOOGLE_CLIENT_ID" "$ENTERED_CLIENT_ID" "logosai-web/.env.local"
     fi
 
-    # OpenAI API Key — optional
-    CURRENT_OPENAI=$(grep "^OPENAI_API_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
-    if [ -z "$CURRENT_OPENAI" ] || [ "$CURRENT_OPENAI" = "your-openai-api-key" ]; then
-        ask "  ${C}◆${NC} OpenAI API Key ${DIM}(optional):${NC} " INPUT_OPENAI
-        if [ -n "$INPUT_OPENAI" ]; then
-            set_env_key "OPENAI_API_KEY" "$INPUT_OPENAI"
-            ok "OpenAI API Key saved"
-        else
-            dim "  Skipped"
-        fi
+    ask_config "GOOGLE_CLIENT_SECRET" "Google Client Secret" "logosai-api/.env" "required"
+    ENTERED_CLIENT_SECRET=$(grep "^GOOGLE_CLIENT_SECRET=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -n "$ENTERED_CLIENT_SECRET" ] && ! echo "$ENTERED_CLIENT_SECRET" | grep -q "^your-"; then
+        set_env_key "GOOGLE_CLIENT_SECRET" "$ENTERED_CLIENT_SECRET" "logosai-web/.env.local"
     fi
 
-    # Anthropic API Key — optional
-    CURRENT_ANTHROPIC=$(grep "^ANTHROPIC_API_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
-    if [ -z "$CURRENT_ANTHROPIC" ] || [ "$CURRENT_ANTHROPIC" = "your-anthropic-api-key" ]; then
-        ask "  ${C}◆${NC} Anthropic API Key ${DIM}(optional):${NC} " INPUT_ANTHROPIC
-        if [ -n "$INPUT_ANTHROPIC" ]; then
-            set_env_key "ANTHROPIC_API_KEY" "$INPUT_ANTHROPIC"
-            ok "Anthropic API Key saved"
-        else
-            dim "  Skipped"
-        fi
+    echo ""
+
+    # ── Security ──
+    # Auto-generate JWT and NextAuth secrets if still placeholder
+    JWT_CURRENT=$(grep "^JWT_SECRET_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -z "$JWT_CURRENT" ] || echo "$JWT_CURRENT" | grep -q "^your-"; then
+        JWT_GENERATED=$(openssl rand -base64 32 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+        set_env_key "JWT_SECRET_KEY" "$JWT_GENERATED" "logosai-api/.env"
+        ok "JWT secret auto-generated"
+    fi
+
+    NEXTAUTH_CURRENT=$(grep "^NEXTAUTH_SECRET=" logosai-web/.env.local 2>/dev/null | cut -d= -f2-)
+    if [ -z "$NEXTAUTH_CURRENT" ] || echo "$NEXTAUTH_CURRENT" | grep -q "^generate-"; then
+        NEXTAUTH_GENERATED=$(openssl rand -base64 32 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+        set_env_key "NEXTAUTH_SECRET" "$NEXTAUTH_GENERATED" "logosai-web/.env.local"
+        ok "NextAuth secret auto-generated"
     fi
 
     echo ""
