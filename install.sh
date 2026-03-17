@@ -343,6 +343,12 @@ done
 echo ""
 info "${W}4${NC} repositories ready"
 
+# Create symlink so 'from ontology.xxx' works (repo is logosai-ontology, package is ontology)
+if [ ! -e "$WORKDIR/ontology" ]; then
+    ln -sf logosai-ontology "$WORKDIR/ontology"
+    ok "Symlink: ontology → logosai-ontology"
+fi
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 3: Install dependencies
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -906,8 +912,9 @@ sleep 2
 echo -e "  ${G}●${NC} ACP Server     ${B}http://localhost:8888${NC}  ${DIM}PID $(cat "$DIR/logs/acp.pid")${NC}"
 
 # logos_api (cd into dir so .env is found by pydantic-settings)
+# PYTHONPATH=$DIR so 'from ontology.xxx' resolves via symlink ontology -> logosai-ontology
 (cd "$DIR/logosai-api" && \
-    PYTHONPATH="$DIR/logosai-ontology:$DIR/logosai-framework:$PYTHONPATH" \
+    PYTHONPATH="$DIR:$DIR/logosai-framework:$PYTHONPATH" \
     nohup "$DIR/.venv/bin/python" -m uvicorn app.main:app \
     --host 0.0.0.0 --port 8090 \
     >> "$DIR/logs/api.log" 2>&1 &)
