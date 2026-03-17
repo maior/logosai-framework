@@ -32,10 +32,10 @@ try:
     from app_agent.websocket_handler import WebSocketHandler
     
     DJANGO_INTEGRATION = True
-    logger.info("Django dialogue system integration complete")
+    logger.debug("Django dialogue system integration complete")
 
 except ImportError as e:
-    logger.debug(f"Django integration skipped, running in standalone mode: {e}")
+    pass  # Expected in standalone mode — no logging needed
     DJANGO_INTEGRATION = False
     
     # 독립 모드용 더미 클래스

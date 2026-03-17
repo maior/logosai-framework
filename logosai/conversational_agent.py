@@ -35,7 +35,7 @@ try:
     )
     DJANGO_INTEGRATION_AVAILABLE = True
 except ImportError as e:
-    logger.debug(f"Django integration not available (standalone mode): {e}")
+    pass  # Expected in standalone mode — no logging needed
     DJANGO_INTEGRATION_AVAILABLE = False
     
     # 더미 클래스 정의
