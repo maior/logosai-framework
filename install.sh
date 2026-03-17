@@ -361,27 +361,25 @@ pip install --upgrade pip setuptools wheel hatchling -q 2>&1 | tail -1
 echo ""
 
 # logosai framework
-info "Installing logosai framework..."
-pip install -e logosai-framework/ --progress-bar on 2>&1 | grep -E "Installing|Successfully|Requirement|error|ERROR" | tail -5
+echo -ne "  ${DIM}Installing logosai framework...${NC}\r"
+pip install -e logosai-framework/ -q 2>&1 | grep -iE "error|ERROR" | head -3
 ok "${W}logosai${NC} framework"
 
 # ontology
 if [ -f logosai-ontology/requirements.txt ]; then
-    info "Installing ontology dependencies..."
-    pip install -r logosai-ontology/requirements.txt --progress-bar on 2>&1 | grep -E "Installing|Successfully|Requirement|error|ERROR" | tail -5
+    echo -ne "  ${DIM}Installing ontology dependencies...${NC}\r"
+    pip install -r logosai-ontology/requirements.txt -q 2>&1 | grep -iE "error|ERROR" | head -3
     ok "${W}ontology${NC} dependencies"
 fi
 
 # logos_api
-info "Installing logos_api dependencies..."
-dim "  (FastAPI, SQLAlchemy, asyncpg, etc. — this may take 1-2 minutes)"
-pip install -e logosai-api/ --progress-bar on 2>&1 | grep -E "Installing|Successfully|Requirement|Downloading|error|ERROR" | tail -10
+echo -ne "  ${DIM}Installing logos_api... (this may take 1-2 min)${NC}\r"
+pip install -e logosai-api/ -q 2>&1 | grep -iE "error|ERROR" | head -3
 ok "${W}logos_api${NC} dependencies"
 
 # Node
-info "Installing logos_web dependencies..."
-dim "  (Next.js, React, Tailwind — this may take 1-2 minutes)"
-(cd logosai-web && npm install 2>&1 | tail -5)
+echo -ne "  ${DIM}Installing logos_web... (this may take 1-2 min)${NC}\r"
+(cd logosai-web && npm install --loglevel=error 2>&1 | grep -iE "error|ERR" | head -3)
 ok "${W}logos_web${NC} dependencies"
 
 echo ""
