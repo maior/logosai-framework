@@ -493,11 +493,9 @@ if [ -e /dev/tty ]; then
         rm -f "${file}.bak"
     }
 
-    # Helper: ask for a config value if it's a placeholder or empty
     ask_config() {
         local key="$1" label="$2" file="$3" required="$4"
         local current=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
-        # Skip if already set with a real value
         if [ -n "$current" ] && ! echo "$current" | grep -qE "^your-|^generate-"; then
             return
         fi
@@ -514,6 +512,58 @@ if [ -e /dev/tty ]; then
         fi
     }
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Usage Mode Selection
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    dim "  ── Usage Mode ──"
+    echo ""
+    echo -e "    ${W}1)${NC} ${G}Personal${NC}  — Single user, no Google OAuth needed" >/dev/tty
+    echo -e "    ${W}2)${NC} ${B}Team${NC}      — Multi-user with Google OAuth login" >/dev/tty
+    echo "" >/dev/tty
+    ask "  ${C}◆${NC} Select mode ${DIM}[1]:${NC} " USAGE_MODE
+    USAGE_MODE="${USAGE_MODE:-1}"
+
+    if [ "$USAGE_MODE" = "1" ]; then
+        # ── Personal Mode ──
+        ok "Personal mode selected"
+        echo ""
+        ask "  ${C}◆${NC} Your email ${DIM}(for login):${NC} " PERSONAL_EMAIL
+        if [ -n "$PERSONAL_EMAIL" ]; then
+            set_env_key "AUTH_MODE" "personal" "logosai-api/.env"
+            set_env_key "PERSONAL_USER_EMAIL" "$PERSONAL_EMAIL" "logosai-api/.env"
+            set_env_key "NEXT_PUBLIC_AUTH_MODE" "personal" "logosai-web/.env.local"
+            set_env_key "NEXT_PUBLIC_PERSONAL_USER_EMAIL" "$PERSONAL_EMAIL" "logosai-web/.env.local"
+            ok "Personal mode: ${W}${PERSONAL_EMAIL}${NC}"
+        else
+            warn "No email provided — you can set PERSONAL_USER_EMAIL in .env later"
+            set_env_key "AUTH_MODE" "personal" "logosai-api/.env"
+            set_env_key "NEXT_PUBLIC_AUTH_MODE" "personal" "logosai-web/.env.local"
+        fi
+    else
+        # ── Team Mode ──
+        ok "Team mode selected"
+        set_env_key "AUTH_MODE" "team" "logosai-api/.env"
+        set_env_key "NEXT_PUBLIC_AUTH_MODE" "team" "logosai-web/.env.local"
+
+        echo ""
+
+        # Google OAuth (required for team mode)
+        dim "  ── Google OAuth (for login) ──"
+        ask_config "GOOGLE_CLIENT_ID" "Google Client ID" "logosai-api/.env" "required"
+        ENTERED_CLIENT_ID=$(grep "^GOOGLE_CLIENT_ID=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+        if [ -n "$ENTERED_CLIENT_ID" ] && ! echo "$ENTERED_CLIENT_ID" | grep -q "^your-"; then
+            set_env_key "GOOGLE_CLIENT_ID" "$ENTERED_CLIENT_ID" "logosai-web/.env.local"
+        fi
+
+        ask_config "GOOGLE_CLIENT_SECRET" "Google Client Secret" "logosai-api/.env" "required"
+        ENTERED_CLIENT_SECRET=$(grep "^GOOGLE_CLIENT_SECRET=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+        if [ -n "$ENTERED_CLIENT_SECRET" ] && ! echo "$ENTERED_CLIENT_SECRET" | grep -q "^your-"; then
+            set_env_key "GOOGLE_CLIENT_SECRET" "$ENTERED_CLIENT_SECRET" "logosai-web/.env.local"
+        fi
+    fi
+
+    echo ""
+
     # ── Database ──
     dim "  ── Database ──"
     ask_config "DATABASE_URL" "Database URL" "logosai-api/.env" "required"
@@ -528,25 +578,7 @@ if [ -e /dev/tty ]; then
 
     echo ""
 
-    # ── Google OAuth (for login) ──
-    dim "  ── Google OAuth (for login) ──"
-    ask_config "GOOGLE_CLIENT_ID" "Google Client ID" "logosai-api/.env" "required"
-    # Set the same Client ID in logos_web too
-    ENTERED_CLIENT_ID=$(grep "^GOOGLE_CLIENT_ID=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
-    if [ -n "$ENTERED_CLIENT_ID" ] && ! echo "$ENTERED_CLIENT_ID" | grep -q "^your-"; then
-        set_env_key "GOOGLE_CLIENT_ID" "$ENTERED_CLIENT_ID" "logosai-web/.env.local"
-    fi
-
-    ask_config "GOOGLE_CLIENT_SECRET" "Google Client Secret" "logosai-api/.env" "required"
-    ENTERED_CLIENT_SECRET=$(grep "^GOOGLE_CLIENT_SECRET=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
-    if [ -n "$ENTERED_CLIENT_SECRET" ] && ! echo "$ENTERED_CLIENT_SECRET" | grep -q "^your-"; then
-        set_env_key "GOOGLE_CLIENT_SECRET" "$ENTERED_CLIENT_SECRET" "logosai-web/.env.local"
-    fi
-
-    echo ""
-
-    # ── Security ──
-    # Auto-generate JWT and NextAuth secrets if still placeholder
+    # ── Security (auto-generated) ──
     JWT_CURRENT=$(grep "^JWT_SECRET_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
     if [ -z "$JWT_CURRENT" ] || echo "$JWT_CURRENT" | grep -q "^your-"; then
         JWT_GENERATED=$(openssl rand -base64 32 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(32))")
@@ -564,10 +596,8 @@ if [ -e /dev/tty ]; then
     echo ""
 
     # ── Server URL Detection ──
-    # Detect the server's IP/hostname for remote access
     dim "  ── Server URL ──"
 
-    # Try to detect external IP
     SERVER_IP=""
     if command -v hostname &>/dev/null; then
         SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -582,7 +612,6 @@ if [ -e /dev/tty ]; then
     DEFAULT_URL="http://${SERVER_IP}:8010"
     CURRENT_NEXTAUTH_URL=$(grep "^NEXTAUTH_URL=" logosai-web/.env.local 2>/dev/null | cut -d= -f2-)
 
-    # Ask if detected IP is different from current setting
     if [ "$CURRENT_NEXTAUTH_URL" = "http://localhost:8010" ] || [ -z "$CURRENT_NEXTAUTH_URL" ]; then
         dim "  Detected server IP: ${W}${SERVER_IP}${NC}"
         ask "  ${C}◆${NC} Server URL ${DIM}(default: ${DEFAULT_URL}):${NC} " INPUT_URL
@@ -591,7 +620,6 @@ if [ -e /dev/tty ]; then
         set_env_key "NEXTAUTH_URL" "$FINAL_URL" "logosai-web/.env.local"
         set_env_key "NEXT_PUBLIC_API_URL" "http://${SERVER_IP}:8090" "logosai-web/.env.local"
 
-        # Update CORS in logos_api to allow this origin
         CURRENT_CORS=$(grep "^CORS_ORIGINS=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
         if ! echo "$CURRENT_CORS" | grep -q "$FINAL_URL"; then
             NEW_CORS="[\"http://localhost:3000\",\"http://localhost:8000\",\"http://localhost:8010\",\"${FINAL_URL}\"]"
@@ -600,12 +628,14 @@ if [ -e /dev/tty ]; then
 
         ok "Server URL: ${W}${FINAL_URL}${NC}"
         dim "  API URL: http://${SERVER_IP}:8090"
-        dim "  CORS updated for remote access"
+        dim "  CORS updated"
 
-        echo ""
-        warn "Google OAuth redirect URI must include:"
-        dim "  ${W}${FINAL_URL}/api/auth/callback/google${NC}"
-        dim "  Add this in Google Cloud Console → Credentials → OAuth Client ID"
+        if [ "$USAGE_MODE" != "1" ]; then
+            echo ""
+            warn "Google OAuth redirect URI must include:"
+            dim "  ${W}${FINAL_URL}/api/auth/callback/google${NC}"
+            dim "  Add this in Google Cloud Console → Credentials → OAuth Client ID"
+        fi
     fi
 
     echo ""
