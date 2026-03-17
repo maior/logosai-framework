@@ -562,6 +562,53 @@ if [ -e /dev/tty ]; then
     fi
 
     echo ""
+
+    # ── Server URL Detection ──
+    # Detect the server's IP/hostname for remote access
+    dim "  ── Server URL ──"
+
+    # Try to detect external IP
+    SERVER_IP=""
+    if command -v hostname &>/dev/null; then
+        SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+    fi
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP="localhost"
+    fi
+
+    DEFAULT_URL="http://${SERVER_IP}:8010"
+    CURRENT_NEXTAUTH_URL=$(grep "^NEXTAUTH_URL=" logosai-web/.env.local 2>/dev/null | cut -d= -f2-)
+
+    # Ask if detected IP is different from current setting
+    if [ "$CURRENT_NEXTAUTH_URL" = "http://localhost:8010" ] || [ -z "$CURRENT_NEXTAUTH_URL" ]; then
+        dim "  Detected server IP: ${W}${SERVER_IP}${NC}"
+        ask "  ${C}◆${NC} Server URL ${DIM}(default: ${DEFAULT_URL}):${NC} " INPUT_URL
+        FINAL_URL="${INPUT_URL:-$DEFAULT_URL}"
+
+        set_env_key "NEXTAUTH_URL" "$FINAL_URL" "logosai-web/.env.local"
+        set_env_key "NEXT_PUBLIC_API_URL" "http://${SERVER_IP}:8090" "logosai-web/.env.local"
+
+        # Update CORS in logos_api to allow this origin
+        CURRENT_CORS=$(grep "^CORS_ORIGINS=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+        if ! echo "$CURRENT_CORS" | grep -q "$FINAL_URL"; then
+            NEW_CORS="[\"http://localhost:3000\",\"http://localhost:8000\",\"http://localhost:8010\",\"${FINAL_URL}\"]"
+            set_env_key "CORS_ORIGINS" "$NEW_CORS" "logosai-api/.env"
+        fi
+
+        ok "Server URL: ${W}${FINAL_URL}${NC}"
+        dim "  API URL: http://${SERVER_IP}:8090"
+        dim "  CORS updated for remote access"
+
+        echo ""
+        warn "Google OAuth redirect URI must include:"
+        dim "  ${W}${FINAL_URL}/api/auth/callback/google${NC}"
+        dim "  Add this in Google Cloud Console → Credentials → OAuth Client ID"
+    fi
+
+    echo ""
 fi
 
 # Migrations
