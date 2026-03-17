@@ -410,12 +410,27 @@ fi
 # set_env_key defined early for DB setup
 set_env_key() {
     local key="$1" value="$2" file="$3"
-    if grep -q "^${key}=" "$file" 2>/dev/null; then
-        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
-    else
-        echo "${key}=${value}" >> "$file"
-    fi
-    rm -f "${file}.bak"
+    # Use Python for reliable .env updates (handles special chars in URLs, passwords)
+    python3 -c "
+import sys
+key, value, filepath = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = []
+found = False
+try:
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+except FileNotFoundError:
+    pass
+with open(filepath, 'w') as f:
+    for line in lines:
+        if line.startswith(key + '='):
+            f.write(f'{key}={value}\n')
+            found = True
+        else:
+            f.write(line)
+    if not found:
+        f.write(f'{key}={value}\n')
+" "$key" "$value" "$file"
 }
 
 # Helper to test PostgreSQL connection
@@ -581,10 +596,19 @@ elif [ "$PG_OK" -eq 1 ]; then
     # Set DATABASE_URL
     DB_URL="postgresql+asyncpg://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
     set_env_key "DATABASE_URL" "$DB_URL" "logosai-api/.env"
-    ok "DATABASE_URL configured"
+
+    # Verify saved correctly
+    SAVED_URL=$(grep "^DATABASE_URL=" logosai-api/.env 2>/dev/null | head -1 | cut -d= -f2-)
+    if echo "$SAVED_URL" | grep -q "${DB_HOST}:${DB_PORT}/${DB_NAME}"; then
+        ok "DATABASE_URL configured → ${DIM}${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}${NC}"
+    else
+        warn "DATABASE_URL may not be correct"
+        dim "  Saved: $SAVED_URL"
+        dim "  Expected user: $DB_USER, host: $DB_HOST, db: $DB_NAME"
+    fi
 fi
 
-dim "  ${DIM}URL: $(grep '^DATABASE_URL=' logosai-api/.env 2>/dev/null | sed 's/.*:.*@/@/' | head -1)${NC}"
+dim "  ${DIM}Stored: $(grep '^DATABASE_URL=' logosai-api/.env 2>/dev/null | sed 's/.*:.*@/@/' | head -1)${NC}"
 
 # ── API Key Configuration ──
 # Ask for API keys if not already set (reads from /dev/tty so works with curl|bash)
