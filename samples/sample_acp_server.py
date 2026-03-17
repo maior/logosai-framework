@@ -610,10 +610,77 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
 # ═══════════════════════════════════════════
 # App Setup
 # ═══════════════════════════════════════════
+# ═══════════════════════════════════════════
+# Single Agent Stream Handler (/stream)
+# Used by orchestrator_service._execute_agent_via_acp()
+# ═══════════════════════════════════════════
+async def single_stream_handler(request: web.Request) -> web.StreamResponse:
+    """SSE streaming for a single agent — called by orchestrator."""
+    body = await request.json()
+    query = body.get("query", "")
+    agent_id = body.get("agent_id", "")
+    context = body.get("context", {})
+
+    response = web.StreamResponse()
+    response.content_type = "text/event-stream"
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    await response.prepare(request)
+
+    async def send_event(event_type: str, data: dict):
+        payload = json.dumps(data, ensure_ascii=False)
+        await response.write(f"event: {event_type}\ndata: {payload}\n\n".encode())
+
+    agent = AGENTS.get(agent_id)
+    if not agent:
+        # Try to find by partial match
+        for aid, a in AGENTS.items():
+            if agent_id in aid or aid in agent_id:
+                agent = a
+                agent_id = aid
+                break
+
+    if not agent:
+        await send_event("error", {"message": f"Agent not found: {agent_id}"})
+        return response
+
+    start_time = time.time()
+    await send_event("agent_started", {"agent_id": agent_id, "agent_name": agent.config.name})
+
+    result = await agent.process(query, context)
+    exec_time = round(time.time() - start_time, 2)
+
+    answer = result.content.get("answer", result.content.get("error", str(result.content)))
+
+    await send_event("agent_completed", {
+        "agent_id": agent_id,
+        "agent_name": agent.config.name,
+        "result": {"content": answer, "answer": answer},
+        "execution_time": exec_time,
+    })
+
+    await send_event("final_result", {
+        "code": 0 if result.type == AgentResponseType.SUCCESS else 1,
+        "data": {
+            "result": answer,
+            "agent_results": [{
+                "agent_id": agent_id,
+                "agent_name": agent.config.name,
+                "result": {"content": answer, "answer": answer},
+                "confidence": 0.9,
+                "execution_time": exec_time,
+            }],
+        },
+    })
+
+    return response
+
+
 async def init_app():
     await _load_agents()
     app = web.Application()
     app.router.add_post("/jsonrpc", jsonrpc_handler)
+    app.router.add_post("/stream", single_stream_handler)
     app.router.add_post("/stream/multi", stream_handler)
     return app
 
