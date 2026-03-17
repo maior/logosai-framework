@@ -485,20 +485,20 @@ elif [ "$PG_OK" -eq 1 ]; then
     DB_HOST="localhost"
     DB_PORT="5432"
     DB_NAME="logosai"
+    DB_CONNECTED=false
 
     if [ -e /dev/tty ]; then
-        # Ask for credentials
-        ask "  ${C}◆${NC} DB user ${DIM}(default: postgres):${NC} " INPUT_DB_USER
-        DB_USER="${INPUT_DB_USER:-postgres}"
-
-        ask "  ${C}◆${NC} DB password: " INPUT_DB_PASS
-        DB_PASS="${INPUT_DB_PASS}"
-
         ask "  ${C}◆${NC} DB host ${DIM}(default: localhost):${NC} " INPUT_DB_HOST
         DB_HOST="${INPUT_DB_HOST:-localhost}"
 
         ask "  ${C}◆${NC} DB port ${DIM}(default: 5432):${NC} " INPUT_DB_PORT
         DB_PORT="${INPUT_DB_PORT:-5432}"
+
+        ask "  ${C}◆${NC} DB user ${DIM}(default: postgres):${NC} " INPUT_DB_USER
+        DB_USER="${INPUT_DB_USER:-postgres}"
+
+        ask "  ${C}◆${NC} DB password ${DIM}(required):${NC} " INPUT_DB_PASS
+        DB_PASS="${INPUT_DB_PASS}"
 
         ask "  ${C}◆${NC} DB name ${DIM}(default: logosai):${NC} " INPUT_DB_NAME
         DB_NAME="${INPUT_DB_NAME:-logosai}"
@@ -506,70 +506,76 @@ elif [ "$PG_OK" -eq 1 ]; then
 
     echo ""
 
-    # Test connection
-    dim "  Testing connection..."
+    # ── Connection test with retry loop ──
+    for attempt in 1 2 3; do
+        dim "  Testing connection... (attempt $attempt)"
 
-    # First try connecting to 'postgres' db to check credentials
-    if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
-        ok "PostgreSQL connection ${G}successful${NC}"
+        if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+            ok "PostgreSQL connection ${G}successful${NC}"
+            DB_CONNECTED=true
+            break
+        fi
 
+        # Connection failed
+        if [ "$attempt" -eq 1 ]; then
+            # First failure — check if it's a peer auth issue
+            if sudo -u "$DB_USER" psql -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+                warn "PostgreSQL uses peer auth — password login not configured"
+                echo ""
+                dim "  LogosAI needs TCP password authentication."
+                dim "  This will set a password and update pg_hba.conf."
+                echo ""
+
+                if [ -z "$DB_PASS" ]; then
+                    ask "  ${C}◆${NC} Set password for DB user '${DB_USER}': " DB_PASS
+                    DB_PASS="${DB_PASS:-logosai}"
+                fi
+
+                # Set password in PostgreSQL
+                sudo -u postgres psql -c "ALTER USER ${DB_USER} PASSWORD '${DB_PASS}';" >/dev/null 2>&1 \
+                    && ok "Password set for user '${DB_USER}'" \
+                    || { warn "Could not set password — try manually: sudo -u postgres psql"; continue; }
+
+                # Enable md5 auth
+                PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" 2>/dev/null | tr -d ' ')
+                if [ -n "$PG_HBA" ] && [ -f "$PG_HBA" ]; then
+                    if ! grep -q "host.*all.*all.*127.0.0.1/32.*md5\|host.*all.*all.*127.0.0.1/32.*scram" "$PG_HBA" 2>/dev/null; then
+                        sudo sed -i '/^# IPv4 local connections/a host    all    all    127.0.0.1/32    md5' "$PG_HBA" 2>/dev/null
+                    fi
+                    sudo systemctl restart postgresql 2>/dev/null || sudo service postgresql restart 2>/dev/null
+                    sleep 2
+                    ok "PostgreSQL authentication configured (md5)"
+                fi
+                continue  # retry
+            fi
+        fi
+
+        # Other failures — ask to re-enter credentials
+        warn "Connection failed (user=${DB_USER} host=${DB_HOST}:${DB_PORT})"
+        if [ "$attempt" -lt 3 ] && [ -e /dev/tty ]; then
+            echo ""
+            dim "  Please re-enter credentials:"
+            ask "  ${C}◆${NC} DB user ${DIM}(current: ${DB_USER}):${NC} " INPUT_DB_USER
+            DB_USER="${INPUT_DB_USER:-$DB_USER}"
+            ask "  ${C}◆${NC} DB password: " INPUT_DB_PASS
+            DB_PASS="${INPUT_DB_PASS:-$DB_PASS}"
+            echo ""
+        fi
+    done
+
+    if [ "$DB_CONNECTED" = true ]; then
         # Create database if not exists
         if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt 2>/dev/null | grep -qw "$DB_NAME"; then
             ok "Database ${W}${DB_NAME}${NC} exists"
         else
             PGPASSWORD="$DB_PASS" createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_NAME" 2>/dev/null \
                 && ok "Database ${W}${DB_NAME}${NC} created" \
-                || warn "Could not create database — create it manually: createdb $DB_NAME"
+                || warn "Could not create database — run manually: createdb $DB_NAME"
         fi
     else
-        # Connection failed — try peer auth (no password)
-        if sudo -u "$DB_USER" psql -d postgres -c "SELECT 1" >/dev/null 2>&1; then
-            warn "PostgreSQL uses peer authentication (no password)"
-            dim "  Setting password for user '${DB_USER}'..."
-
-            if [ -e /dev/tty ] && [ -z "$DB_PASS" ]; then
-                ask "  ${C}◆${NC} Set DB password for '${DB_USER}': " DB_PASS
-                DB_PASS="${DB_PASS:-logosai}"
-            fi
-            [ -z "$DB_PASS" ] && DB_PASS="logosai"
-
-            # Set password
-            sudo -u postgres psql -c "ALTER USER ${DB_USER} PASSWORD '${DB_PASS}';" >/dev/null 2>&1
-
-            # Enable md5 auth for local TCP connections
-            PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" 2>/dev/null | tr -d ' ')
-            if [ -n "$PG_HBA" ] && [ -f "$PG_HBA" ]; then
-                # Add md5 line for local TCP if not already there
-                if ! grep -q "host.*all.*all.*127.0.0.1.*md5" "$PG_HBA" 2>/dev/null; then
-                    sudo sed -i '/^# IPv4 local connections/a host    all    all    127.0.0.1/32    md5' "$PG_HBA" 2>/dev/null
-                fi
-                sudo systemctl restart postgresql 2>/dev/null || sudo service postgresql restart 2>/dev/null
-                sleep 2
-                ok "PostgreSQL authentication configured"
-            fi
-
-            # Verify connection works now
-            if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
-                ok "PostgreSQL connection ${G}successful${NC}"
-
-                # Create database
-                if ! PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt 2>/dev/null | grep -qw "$DB_NAME"; then
-                    PGPASSWORD="$DB_PASS" createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_NAME" 2>/dev/null \
-                        && ok "Database ${W}${DB_NAME}${NC} created" \
-                        || warn "Could not create database"
-                else
-                    ok "Database ${W}${DB_NAME}${NC} exists"
-                fi
-            else
-                warn "PostgreSQL connection still failing"
-                dim "  You may need to configure pg_hba.conf manually"
-                dim "  See: https://www.postgresql.org/docs/current/auth-pg-hba-conf.html"
-            fi
-        else
-            warn "Cannot connect to PostgreSQL"
-            dim "  Check that PostgreSQL is running and credentials are correct"
-            dim "  Current: user=${DB_USER} host=${DB_HOST} port=${DB_PORT}"
-        fi
+        warn "Could not connect to PostgreSQL after 3 attempts"
+        dim "  You can fix this later by editing: $WORKDIR/logosai-api/.env"
+        dim "  Then run: cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
     fi
 
     # Set DATABASE_URL
