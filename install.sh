@@ -889,8 +889,16 @@ for PORT in 8888 8090 8010; do
     kill_port $PORT
 done
 
+# Load API keys from logosai-api/.env for ACP server
+_load_env_key() { grep "^$1=" "$DIR/logosai-api/.env" 2>/dev/null | cut -d= -f2-; }
+export GOOGLE_API_KEY="${GOOGLE_API_KEY:-$(_load_env_key GOOGLE_API_KEY)}"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-$(_load_env_key OPENAI_API_KEY)}"
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-$(_load_env_key ANTHROPIC_API_KEY)}"
+
 # ACP server
 (cd "$DIR/logosai-framework/samples" && \
+    GOOGLE_API_KEY="$GOOGLE_API_KEY" \
+    OPENAI_API_KEY="$OPENAI_API_KEY" \
     nohup "$DIR/.venv/bin/python" sample_acp_server.py \
     >> "$DIR/logs/acp.log" 2>&1 &)
 echo "$!" > "$DIR/logs/acp.pid"
