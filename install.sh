@@ -897,12 +897,12 @@ echo "$!" > "$DIR/logs/acp.pid"
 sleep 2
 echo -e "  ${G}●${NC} ACP Server     ${B}http://localhost:8888${NC}  ${DIM}PID $(cat "$DIR/logs/acp.pid")${NC}"
 
-# logos_api
-PYTHONPATH="$DIR/logosai-ontology:$DIR/logosai-framework:$PYTHONPATH" \
+# logos_api (cd into dir so .env is found by pydantic-settings)
+(cd "$DIR/logosai-api" && \
+    PYTHONPATH="$DIR/logosai-ontology:$DIR/logosai-framework:$PYTHONPATH" \
     nohup "$DIR/.venv/bin/python" -m uvicorn app.main:app \
     --host 0.0.0.0 --port 8090 \
-    --app-dir "$DIR/logosai-api" \
-    >> "$DIR/logs/api.log" 2>&1 &
+    >> "$DIR/logs/api.log" 2>&1 &)
 echo "$!" > "$DIR/logs/api.pid"
 sleep 3
 echo -e "  ${G}●${NC} logos_api       ${B}http://localhost:8090${NC}  ${DIM}PID $(cat "$DIR/logs/api.pid")${NC}"
