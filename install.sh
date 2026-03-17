@@ -392,79 +392,193 @@ info "All dependencies installed"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 step "Setting up database"
 
-# Docker PostgreSQL if needed
-if [ "$PG_OK" -eq 2 ]; then
-    # Check if container exists but is stopped
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
-        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
-            echo -ne "  ${DIM}◇ Restarting stopped PostgreSQL container...${NC}"
-            docker start logosai-pg >/dev/null 2>&1
-            echo -ne "\r$(printf '%-60s' '')\r"
-            ok "PostgreSQL ${DIM}(Docker: logosai-pg restarted)${NC}"
-        else
-            ok "PostgreSQL Docker container running"
-        fi
+# Create .env files first (needed for DB config)
+if [ ! -f logosai-api/.env ]; then
+    cp logosai-api/.env.example logosai-api/.env
+    ok "Config ${W}logosai-api/.env${NC} created"
+else
+    ok "Config ${W}logosai-api/.env${NC} exists"
+fi
+
+if [ ! -f logosai-web/.env.local ]; then
+    cp logosai-web/.env.example logosai-web/.env.local
+    ok "Config ${W}logosai-web/.env.local${NC} created"
+else
+    ok "Config ${W}logosai-web/.env.local${NC} exists"
+fi
+
+# set_env_key defined early for DB setup
+set_env_key() {
+    local key="$1" value="$2" file="$3"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
     else
-        echo -ne "  ${DIM}◇ Starting PostgreSQL via Docker...${NC}"
-        docker run -d --name logosai-pg \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=postgres \
-            -e POSTGRES_DB=logosai \
-            -p 5432:5432 \
-            postgres:15-alpine >/dev/null 2>&1
-        echo -ne "\r$(printf '%-60s' '')\r"
-        ok "PostgreSQL ${DIM}(Docker: logosai-pg — postgres:postgres@localhost:5432)${NC}"
+        echo "${key}=${value}" >> "$file"
+    fi
+    rm -f "${file}.bak"
+}
+
+# Helper to test PostgreSQL connection
+test_pg_connection() {
+    local user="$1" pass="$2" host="$3" port="$4" db="$5"
+    PGPASSWORD="$pass" psql -h "$host" -p "$port" -U "$user" -d "$db" -c "SELECT 1" >/dev/null 2>&1
+}
+
+echo ""
+
+if [ "$PG_OK" -eq 2 ]; then
+    # ── Docker PostgreSQL ──
+    dim "  ── Docker PostgreSQL ──"
+    echo ""
+
+    DB_USER="postgres"
+    DB_PASS="postgres"
+    DB_HOST="localhost"
+    DB_PORT="5432"
+    DB_NAME="logosai"
+
+    if [ -e /dev/tty ]; then
+        ask "  ${C}◆${NC} DB password ${DIM}(default: postgres):${NC} " INPUT_DB_PASS
+        DB_PASS="${INPUT_DB_PASS:-postgres}"
     fi
 
-    # Wait for PostgreSQL to accept connections
-    echo -ne "  ${DIM}◇ Waiting for PostgreSQL to accept connections...${NC}"
-    for i in $(seq 1 15); do
-        if docker exec logosai-pg pg_isready -U postgres >/dev/null 2>&1; then
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+            docker start logosai-pg >/dev/null 2>&1
+            ok "PostgreSQL container restarted"
+        else
+            ok "PostgreSQL container running"
+        fi
+    else
+        docker run -d --name logosai-pg \
+            -e POSTGRES_USER="$DB_USER" \
+            -e POSTGRES_PASSWORD="$DB_PASS" \
+            -e POSTGRES_DB="$DB_NAME" \
+            -p ${DB_PORT}:5432 \
+            postgres:15-alpine >/dev/null 2>&1
+        ok "PostgreSQL started ${DIM}(Docker: logosai-pg)${NC}"
+    fi
+
+    # Wait for ready
+    echo -ne "  ${DIM}  Waiting for PostgreSQL...${NC}"
+    for i in $(seq 1 20); do
+        if docker exec logosai-pg pg_isready -U "$DB_USER" >/dev/null 2>&1; then
             echo -ne "\r$(printf '%-60s' '')\r"
             ok "PostgreSQL is ready"
             break
         fi
         sleep 1
     done
-fi
 
-# Create database
-if [ "$PG_OK" -eq 1 ] && command -v createdb &>/dev/null; then
-    # Local PostgreSQL — use createdb
-    createdb logosai 2>/dev/null \
-        && ok "Database ${W}logosai${NC} created" \
-        || ok "Database ${W}logosai${NC} exists"
-elif [ "$PG_OK" -eq 2 ]; then
-    # Docker PostgreSQL — POSTGRES_DB=logosai already creates it
-    # But verify it exists, create if somehow missing
-    docker exec logosai-pg psql -U postgres -lqt 2>/dev/null | grep -qw logosai \
-        && ok "Database ${W}logosai${NC} exists ${DIM}(Docker)${NC}" \
-        || { docker exec logosai-pg createdb -U postgres logosai 2>/dev/null; ok "Database ${W}logosai${NC} created ${DIM}(Docker)${NC}"; }
-fi
+    # Set DATABASE_URL
+    DB_URL="postgresql+asyncpg://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+    set_env_key "DATABASE_URL" "$DB_URL" "logosai-api/.env"
+    ok "DATABASE_URL configured ${DIM}(Docker)${NC}"
 
-# .env files — set correct DATABASE_URL based on PostgreSQL mode
-if [ ! -f logosai-api/.env ]; then
-    cp logosai-api/.env.example logosai-api/.env
-    ok "Config ${W}logosai-api/.env${NC} ${DIM}(created from .env.example)${NC}"
-else
-    ok "Config ${W}logosai-api/.env${NC} exists"
-fi
-
-# Ensure DATABASE_URL is set correctly in .env
-if [ "$PG_OK" -eq 2 ]; then
-    if grep -q "DATABASE_URL" logosai-api/.env 2>/dev/null; then
-        dim "  DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/logosai"
-    fi
 elif [ "$PG_OK" -eq 1 ]; then
-    dim "  DATABASE_URL: check logosai-api/.env matches your PostgreSQL credentials"
+    # ── Local PostgreSQL ──
+    dim "  ── Local PostgreSQL ──"
+    echo ""
+
+    DB_USER="postgres"
+    DB_PASS=""
+    DB_HOST="localhost"
+    DB_PORT="5432"
+    DB_NAME="logosai"
+
+    if [ -e /dev/tty ]; then
+        # Ask for credentials
+        ask "  ${C}◆${NC} DB user ${DIM}(default: postgres):${NC} " INPUT_DB_USER
+        DB_USER="${INPUT_DB_USER:-postgres}"
+
+        ask "  ${C}◆${NC} DB password: " INPUT_DB_PASS
+        DB_PASS="${INPUT_DB_PASS}"
+
+        ask "  ${C}◆${NC} DB host ${DIM}(default: localhost):${NC} " INPUT_DB_HOST
+        DB_HOST="${INPUT_DB_HOST:-localhost}"
+
+        ask "  ${C}◆${NC} DB port ${DIM}(default: 5432):${NC} " INPUT_DB_PORT
+        DB_PORT="${INPUT_DB_PORT:-5432}"
+
+        ask "  ${C}◆${NC} DB name ${DIM}(default: logosai):${NC} " INPUT_DB_NAME
+        DB_NAME="${INPUT_DB_NAME:-logosai}"
+    fi
+
+    echo ""
+
+    # Test connection
+    dim "  Testing connection..."
+
+    # First try connecting to 'postgres' db to check credentials
+    if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+        ok "PostgreSQL connection ${G}successful${NC}"
+
+        # Create database if not exists
+        if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt 2>/dev/null | grep -qw "$DB_NAME"; then
+            ok "Database ${W}${DB_NAME}${NC} exists"
+        else
+            PGPASSWORD="$DB_PASS" createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_NAME" 2>/dev/null \
+                && ok "Database ${W}${DB_NAME}${NC} created" \
+                || warn "Could not create database — create it manually: createdb $DB_NAME"
+        fi
+    else
+        # Connection failed — try peer auth (no password)
+        if sudo -u "$DB_USER" psql -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+            warn "PostgreSQL uses peer authentication (no password)"
+            dim "  Setting password for user '${DB_USER}'..."
+
+            if [ -e /dev/tty ] && [ -z "$DB_PASS" ]; then
+                ask "  ${C}◆${NC} Set DB password for '${DB_USER}': " DB_PASS
+                DB_PASS="${DB_PASS:-logosai}"
+            fi
+            [ -z "$DB_PASS" ] && DB_PASS="logosai"
+
+            # Set password
+            sudo -u postgres psql -c "ALTER USER ${DB_USER} PASSWORD '${DB_PASS}';" >/dev/null 2>&1
+
+            # Enable md5 auth for local TCP connections
+            PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" 2>/dev/null | tr -d ' ')
+            if [ -n "$PG_HBA" ] && [ -f "$PG_HBA" ]; then
+                # Add md5 line for local TCP if not already there
+                if ! grep -q "host.*all.*all.*127.0.0.1.*md5" "$PG_HBA" 2>/dev/null; then
+                    sudo sed -i '/^# IPv4 local connections/a host    all    all    127.0.0.1/32    md5' "$PG_HBA" 2>/dev/null
+                fi
+                sudo systemctl restart postgresql 2>/dev/null || sudo service postgresql restart 2>/dev/null
+                sleep 2
+                ok "PostgreSQL authentication configured"
+            fi
+
+            # Verify connection works now
+            if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+                ok "PostgreSQL connection ${G}successful${NC}"
+
+                # Create database
+                if ! PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt 2>/dev/null | grep -qw "$DB_NAME"; then
+                    PGPASSWORD="$DB_PASS" createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_NAME" 2>/dev/null \
+                        && ok "Database ${W}${DB_NAME}${NC} created" \
+                        || warn "Could not create database"
+                else
+                    ok "Database ${W}${DB_NAME}${NC} exists"
+                fi
+            else
+                warn "PostgreSQL connection still failing"
+                dim "  You may need to configure pg_hba.conf manually"
+                dim "  See: https://www.postgresql.org/docs/current/auth-pg-hba-conf.html"
+            fi
+        else
+            warn "Cannot connect to PostgreSQL"
+            dim "  Check that PostgreSQL is running and credentials are correct"
+            dim "  Current: user=${DB_USER} host=${DB_HOST} port=${DB_PORT}"
+        fi
+    fi
+
+    # Set DATABASE_URL
+    DB_URL="postgresql+asyncpg://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+    set_env_key "DATABASE_URL" "$DB_URL" "logosai-api/.env"
+    ok "DATABASE_URL configured"
 fi
 
-if [ ! -f logosai-web/.env.local ]; then
-    cp logosai-web/.env.example logosai-web/.env.local
-    ok "Config ${W}logosai-web/.env.local${NC} ${DIM}(created from .env.example)${NC}"
-else
-    ok "Config ${W}logosai-web/.env.local${NC} exists"
-fi
+dim "  ${DIM}URL: $(grep '^DATABASE_URL=' logosai-api/.env 2>/dev/null | sed 's/.*:.*@/@/' | head -1)${NC}"
 
 # ── API Key Configuration ──
 # Ask for API keys if not already set (reads from /dev/tty so works with curl|bash)
@@ -483,15 +597,7 @@ if [ -e /dev/tty ]; then
     info "Configuration ${DIM}(press Enter to skip / keep default)${NC}"
     echo ""
 
-    set_env_key() {
-        local key="$1" value="$2" file="$3"
-        if grep -q "^${key}=" "$file" 2>/dev/null; then
-            sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
-        else
-            echo "${key}=${value}" >> "$file"
-        fi
-        rm -f "${file}.bak"
-    }
+    # set_env_key already defined in Step 4
 
     ask_config() {
         local key="$1" label="$2" file="$3" required="$4"
@@ -561,12 +667,6 @@ if [ -e /dev/tty ]; then
             set_env_key "GOOGLE_CLIENT_SECRET" "$ENTERED_CLIENT_SECRET" "logosai-web/.env.local"
         fi
     fi
-
-    echo ""
-
-    # ── Database ──
-    dim "  ── Database ──"
-    ask_config "DATABASE_URL" "Database URL" "logosai-api/.env" "required"
 
     echo ""
 
@@ -642,24 +742,47 @@ if [ -e /dev/tty ]; then
 fi
 
 # Migrations
-echo -ne "  ${DIM}◇ Running Alembic migrations...${NC}"
+echo ""
+info "Running database migrations..."
 MIGRATION_OUTPUT=$(cd logosai-api && python -m alembic upgrade head 2>&1) \
-    && { echo -ne "\r$(printf '%-60s' '')\r"; ok "Database migrations ${G}complete${NC}"; } \
+    && ok "Database migrations ${G}complete${NC}" \
     || {
-        echo -ne "\r$(printf '%-60s' '')\r"
         warn "Migrations failed"
-        echo ""
-        dim "  Possible causes:"
-        dim "    - PostgreSQL is not running or not accepting connections"
-        dim "    - DATABASE_URL in logosai-api/.env is incorrect"
-        dim "    - Database 'logosai' does not exist"
-        echo ""
-        dim "  To fix manually:"
-        dim "    1. Edit $WORKDIR/logosai-api/.env"
-        dim "    2. Set DATABASE_URL=postgresql+asyncpg://USER:PASS@HOST:5432/logosai"
-        dim "    3. Run: cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
-        echo ""
+        dim "  ${MIGRATION_OUTPUT}" 2>/dev/null | tail -3
+        dim ""
+        dim "  To fix: edit $WORKDIR/logosai-api/.env and re-run:"
+        dim "    cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
     }
+
+# ── Post-install verification ──
+echo ""
+info "Verifying setup..."
+
+# Test DB connection via Python (uses the actual DATABASE_URL from .env)
+DB_TEST=$(cd logosai-api && python -c "
+import asyncio
+from app.config import settings
+from sqlalchemy.ext.asyncio import create_async_engine
+async def test():
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    async with engine.connect() as conn:
+        result = await conn.execute(__import__('sqlalchemy').text('SELECT 1'))
+        return result.scalar()
+    await engine.dispose()
+try:
+    asyncio.run(test())
+    print('OK')
+except Exception as e:
+    print(f'FAIL:{e}')
+" 2>&1)
+
+if [ "$DB_TEST" = "OK" ]; then
+    ok "Database connection ${G}verified${NC}"
+else
+    FAIL_MSG=$(echo "$DB_TEST" | sed 's/FAIL://')
+    warn "Database connection failed: ${FAIL_MSG}"
+    dim "  Check DATABASE_URL in logosai-api/.env"
+fi
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 5: Generate management scripts
