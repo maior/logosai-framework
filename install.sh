@@ -715,6 +715,14 @@ if [ -e /dev/tty ]; then
 
     echo ""
 
+    # ── Search API Key ──
+    dim "  ── Internet Search ──"
+    dim "  Enables real-time search: news, weather, prices, etc."
+    dim "  Free key: ${W}https://tavily.com${NC}"
+    ask_config "TAVILY_API_KEY" "Tavily API Key" "logosai-api/.env" "optional"
+
+    echo ""
+
     # ── Security (auto-generated) ──
     JWT_CURRENT=$(grep "^JWT_SECRET_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
     if [ -z "$JWT_CURRENT" ] || echo "$JWT_CURRENT" | grep -q "^your-"; then
@@ -903,11 +911,13 @@ _load_env_key() { grep "^$1=" "$DIR/logosai-api/.env" 2>/dev/null | cut -d= -f2-
 export GOOGLE_API_KEY="${GOOGLE_API_KEY:-$(_load_env_key GOOGLE_API_KEY)}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-$(_load_env_key OPENAI_API_KEY)}"
 export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-$(_load_env_key ANTHROPIC_API_KEY)}"
+export TAVILY_API_KEY="${TAVILY_API_KEY:-$(_load_env_key TAVILY_API_KEY)}"
 
 # ACP server
 (cd "$DIR/logosai-framework/samples" && \
     GOOGLE_API_KEY="$GOOGLE_API_KEY" \
     OPENAI_API_KEY="$OPENAI_API_KEY" \
+    TAVILY_API_KEY="$TAVILY_API_KEY" \
     nohup "$DIR/.venv/bin/python" sample_acp_server.py \
     >> "$DIR/logs/acp.log" 2>&1 &)
 echo "$!" > "$DIR/logs/acp.pid"

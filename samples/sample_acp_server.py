@@ -324,6 +324,109 @@ class WritingAgent(LogosAIAgent):
 
 
 # ═══════════════════════════════════════════
+# Agent 7: Internet Search Agent (requires TAVILY_API_KEY)
+# ═══════════════════════════════════════════
+class InternetSearchAgent(LogosAIAgent):
+    """Internet search agent powered by Tavily API + LLM."""
+
+    def __init__(self):
+        config = AgentConfig(
+            name="Internet Search Agent",
+            agent_type=AgentType.CUSTOM,
+            description="Searches the internet for real-time information: news, weather, prices, current events, and factual queries.",
+        )
+        super().__init__(config)
+        self.llm = None
+        self.tavily_key = os.getenv("TAVILY_API_KEY", "")
+
+    async def initialize(self):
+        await super().initialize()
+        self.llm = create_llm_client()
+        if self.llm:
+            await self.llm.initialize()
+        return True
+
+    def is_available(self):
+        return bool(self.tavily_key)
+
+    async def _tavily_search(self, query: str, topic: str = "general", max_results: int = 5) -> dict:
+        """Call Tavily Search API."""
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "api_key": self.tavily_key,
+                "query": query,
+                "search_depth": "basic",
+                "include_answer": True,
+                "max_results": max_results,
+                "topic": topic,
+            }
+            async with session.post("https://api.tavily.com/search", json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    raise Exception(f"Tavily API error: {resp.status}")
+
+    async def process(self, query: str, context=None) -> AgentResponse:
+        if not self.tavily_key:
+            return AgentResponse(
+                type=AgentResponseType.ERROR,
+                content={"error": "TAVILY_API_KEY not set. Get a free key at https://tavily.com"},
+                message="Tavily not configured",
+            )
+
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            # Step 1: Optimize query with LLM (detect time intent)
+            search_query = query
+            topic = "general"
+            if self.llm:
+                try:
+                    analysis_msgs = [
+                        {"role": "system", "content": f"Today is {today}. Extract a search-optimized query from the user input. Return JSON: {{\"query\": \"optimized search query with dates if relevant\", \"topic\": \"news\" or \"general\"}}. JSON only."},
+                        {"role": "user", "content": query},
+                    ]
+                    analysis = await llm_call_with_retry(self.llm, analysis_msgs, timeout=10)
+                    json_match = re.search(r'\{[^{}]*\}', analysis, re.DOTALL)
+                    if json_match:
+                        parsed = json.loads(json_match.group())
+                        search_query = parsed.get("query", query)
+                        topic = parsed.get("topic", "general")
+                except Exception:
+                    pass  # Use original query
+
+            # Step 2: Search
+            results = await self._tavily_search(search_query, topic=topic)
+            tavily_answer = results.get("answer", "")
+            search_results = results.get("results", [])
+
+            # Step 3: Synthesize with LLM
+            if self.llm and search_results:
+                sources = "\n".join([
+                    f"- {r.get('title', '')}: {r.get('content', '')[:300]} ({r.get('url', '')})"
+                    for r in search_results[:5]
+                ])
+                synth_msgs = [
+                    {"role": "system", "content": f"Today is {today}. You are a search assistant. Answer the user's question based on the search results. Cite sources with URLs. If data is old, note the date. Respond in the same language as the user's query."},
+                    {"role": "user", "content": f"Question: {query}\n\nTavily summary: {tavily_answer}\n\nSearch results:\n{sources}\n\nProvide a clear, concise answer with sources."},
+                ]
+                answer = await llm_call_with_retry(self.llm, synth_msgs, timeout=20)
+            elif tavily_answer:
+                answer = tavily_answer
+            else:
+                answer = "No results found."
+
+            return AgentResponse(
+                type=AgentResponseType.SUCCESS,
+                content={"answer": answer},
+                message="Search complete",
+            )
+        except Exception as e:
+            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Search error")
+
+
+# ═══════════════════════════════════════════
 # Agent Registry
 # ═══════════════════════════════════════════
 AGENTS = {}
@@ -337,15 +440,25 @@ async def _load_agents():
         CodeAgent(),
         SummarizationAgent(),
         WritingAgent(),
+        InternetSearchAgent(),
     ]
 
+    loaded = []
+    skipped = []
     for a in agents:
+        # Skip agents that require unavailable API keys
+        if hasattr(a, 'is_available') and not a.is_available():
+            skipped.append(a.config.name)
+            continue
         await a.initialize()
         agent_id = a.config.name.lower().replace(" ", "_")
         AGENTS[agent_id] = a
+        loaded.append(agent_id)
 
     llm_status = "with LLM" if LLM_AVAILABLE and create_llm_client() else "without LLM (set GOOGLE_API_KEY)"
-    print(f"Loaded {len(AGENTS)} agents ({llm_status}): {list(AGENTS.keys())}")
+    print(f"Loaded {len(AGENTS)} agents ({llm_status}): {loaded}")
+    if skipped:
+        print(f"  Skipped (missing API key): {skipped}")
 
 
 # ═══════════════════════════════════════════
@@ -436,6 +549,8 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
             agent_id = "summarization_agent"
         elif any(kw in q_lower for kw in ["작성", "이메일", "보고서", "write", "email", "report", "letter"]):
             agent_id = "writing_agent"
+        elif any(kw in q_lower for kw in ["검색", "찾아", "search", "뉴스", "news", "날씨", "weather", "오늘", "today", "현재", "최신", "가격", "price", "환율", "주가"]):
+            agent_id = "internet_search_agent" if "internet_search_agent" in AGENTS else "llm_chat_agent"
         else:
             agent_id = "llm_chat_agent"  # Default to general chat
 
