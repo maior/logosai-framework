@@ -85,7 +85,7 @@ class AgentDialogueManager:
         # 대화 관련 메시지 구독 (lazy initialization)
         self._subscriptions_setup = False
         
-        logger.info("💬 에이전트 대화 관리자 초기화 완료")
+        logger.info("Agent dialogue manager initialized")
     
     async def _setup_subscriptions(self):
         """메시지 구독 설정"""
