@@ -343,11 +343,14 @@ done
 echo ""
 info "${W}4${NC} repositories ready"
 
-# Create symlink so 'from ontology.xxx' works (repo is logosai-ontology, package is ontology)
-if [ ! -e "$WORKDIR/ontology" ]; then
-    ln -sf logosai-ontology "$WORKDIR/ontology"
-    ok "Symlink: ontology → logosai-ontology"
-fi
+# Create symlinks to match development directory structure
+# (repos are cloned as logosai-xxx but code imports use ontology, logosai, logos_api, logos_web)
+_symlink() { [ ! -e "$WORKDIR/$2" ] && ln -sf "$1" "$WORKDIR/$2"; }
+_symlink logosai-ontology  ontology
+_symlink logosai-framework logosai
+_symlink logosai-api       logos_api
+_symlink logosai-web       logos_web
+ok "Symlinks created ${DIM}(ontology, logosai, logos_api, logos_web)${NC}"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 3: Install dependencies
