@@ -438,14 +438,13 @@ fi
 # .env files — set correct DATABASE_URL based on PostgreSQL mode
 if [ ! -f logosai-api/.env ]; then
     cp logosai-api/.env.example logosai-api/.env
-    ok "Config ${W}logosai-api/.env${NC} ${DIM}(from .env.example)${NC}"
+    ok "Config ${W}logosai-api/.env${NC} ${DIM}(created from .env.example)${NC}"
 else
     ok "Config ${W}logosai-api/.env${NC} exists"
 fi
 
 # Ensure DATABASE_URL is set correctly in .env
 if [ "$PG_OK" -eq 2 ]; then
-    # Docker mode — make sure .env points to localhost:5432 with postgres:postgres
     if grep -q "DATABASE_URL" logosai-api/.env 2>/dev/null; then
         dim "  DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/logosai"
     fi
@@ -455,9 +454,73 @@ fi
 
 if [ ! -f logosai-web/.env.local ]; then
     cp logosai-web/.env.example logosai-web/.env.local
-    ok "Config ${W}logosai-web/.env.local${NC} ${DIM}(from .env.example)${NC}"
+    ok "Config ${W}logosai-web/.env.local${NC} ${DIM}(created from .env.example)${NC}"
 else
     ok "Config ${W}logosai-web/.env.local${NC} exists"
+fi
+
+# ── API Key Configuration ──
+# Only ask if running interactively and keys are not set yet
+if [ -t 0 ] && grep -q "your-google-api-key\|your-openai-api-key\|^GOOGLE_API_KEY=$" logosai-api/.env 2>/dev/null; then
+    echo ""
+    info "API Key Setup ${DIM}(press Enter to skip any)${NC}"
+    echo ""
+
+    # Google API Key (Gemini) — used for agent orchestration and memory
+    CURRENT_GOOGLE=$(grep "^GOOGLE_API_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -z "$CURRENT_GOOGLE" ] || [ "$CURRENT_GOOGLE" = "your-google-api-key" ]; then
+        echo -ne "  ${C}◆${NC} Google API Key ${DIM}(for Gemini — recommended):${NC} "
+        read -r INPUT_GOOGLE
+        if [ -n "$INPUT_GOOGLE" ]; then
+            if grep -q "^GOOGLE_API_KEY=" logosai-api/.env; then
+                sed -i.bak "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_GOOGLE|" logosai-api/.env
+            else
+                echo "GOOGLE_API_KEY=$INPUT_GOOGLE" >> logosai-api/.env
+            fi
+            ok "Google API Key saved"
+        else
+            dim "  Skipped — set GOOGLE_API_KEY in logosai-api/.env later"
+        fi
+    fi
+
+    # OpenAI API Key — optional
+    CURRENT_OPENAI=$(grep "^OPENAI_API_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -z "$CURRENT_OPENAI" ] || [ "$CURRENT_OPENAI" = "your-openai-api-key" ]; then
+        echo -ne "  ${C}◆${NC} OpenAI API Key ${DIM}(optional):${NC} "
+        read -r INPUT_OPENAI
+        if [ -n "$INPUT_OPENAI" ]; then
+            if grep -q "^OPENAI_API_KEY=" logosai-api/.env; then
+                sed -i.bak "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$INPUT_OPENAI|" logosai-api/.env
+            else
+                echo "OPENAI_API_KEY=$INPUT_OPENAI" >> logosai-api/.env
+            fi
+            ok "OpenAI API Key saved"
+        else
+            dim "  Skipped"
+        fi
+    fi
+
+    # Anthropic API Key — optional
+    CURRENT_ANTHROPIC=$(grep "^ANTHROPIC_API_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -z "$CURRENT_ANTHROPIC" ] || [ "$CURRENT_ANTHROPIC" = "your-anthropic-api-key" ]; then
+        echo -ne "  ${C}◆${NC} Anthropic API Key ${DIM}(optional):${NC} "
+        read -r INPUT_ANTHROPIC
+        if [ -n "$INPUT_ANTHROPIC" ]; then
+            if grep -q "^ANTHROPIC_API_KEY=" logosai-api/.env; then
+                sed -i.bak "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=$INPUT_ANTHROPIC|" logosai-api/.env
+            else
+                echo "ANTHROPIC_API_KEY=$INPUT_ANTHROPIC" >> logosai-api/.env
+            fi
+            ok "Anthropic API Key saved"
+        else
+            dim "  Skipped"
+        fi
+    fi
+
+    # Clean up sed backup files
+    rm -f logosai-api/.env.bak
+
+    echo ""
 fi
 
 # Migrations
@@ -506,12 +569,18 @@ mkdir -p "$DIR/logs"
 
 kill_port() {
     local port=$1
-    # Try fuser first (Linux), then lsof (macOS)
     if command -v fuser &>/dev/null; then
         fuser -k $port/tcp 2>/dev/null && sleep 1 || true
     elif command -v lsof &>/dev/null; then
         local pid=$(lsof -ti :$port 2>/dev/null || true)
         [ -n "$pid" ] && kill $pid 2>/dev/null && sleep 1 || true
+    else
+        # Fallback: use ss (available on all Linux)
+        local pids=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | sort -u)
+        for pid in $pids; do
+            kill $pid 2>/dev/null || true
+        done
+        [ -n "$pids" ] && sleep 1 || true
     fi
 }
 for PORT in 8888 8090 8010; do
