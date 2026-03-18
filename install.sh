@@ -391,10 +391,8 @@ echo -ne "  ${DIM}Installing logos_web... (this may take 1-2 min)${NC}\r"
 (cd logosai-web && npm install --loglevel=error 2>&1 | grep -iE "error|ERR" | head -3)
 ok "${W}logos_web${NC} dependencies"
 
-# Build frontend for production (faster startup, no black-text flash)
-echo -ne "  ${DIM}Building logos_web for production...${NC}\r"
-(cd logosai-web && npx next build 2>&1 | tail -1)
-ok "${W}logos_web${NC} production build"
+# NOTE: logos_web production build is done AFTER .env.local is configured (Step 4)
+# so that NEXT_PUBLIC_* env vars are included in the build
 
 echo ""
 info "All dependencies installed"
@@ -833,6 +831,14 @@ else
     warn "Database connection failed: ${FAIL_MSG}"
     dim "  Check DATABASE_URL in logosai-api/.env"
 fi
+
+# Build logos_web for production (AFTER .env.local is fully configured)
+# NEXT_PUBLIC_* vars must be present at build time to be included in the bundle
+echo ""
+info "Building logos_web for production..."
+dim "  (this may take 1-2 minutes)"
+(cd logosai-web && npx next build 2>&1 | tail -3)
+ok "${W}logos_web${NC} production build"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 5: Generate management scripts
