@@ -372,62 +372,74 @@ class InternetSearchAgent(LogosAIAgent):
                     raise Exception(f"Tavily API error: {resp.status} — {body[:100]}")
 
     async def process(self, query: str, context=None) -> AgentResponse:
-        if not self.tavily_key:
-            return AgentResponse(
-                type=AgentResponseType.ERROR,
-                content={"error": "TAVILY_API_KEY not set. Get a free key at https://tavily.com"},
-                message="Tavily not configured",
-            )
+        today = datetime.now().strftime("%Y-%m-%d")
 
-        try:
-            today = datetime.now().strftime("%Y-%m-%d")
+        # Step 1: Try Tavily search
+        search_succeeded = False
+        tavily_answer = ""
+        search_results = []
 
-            # Step 1: Optimize query with LLM (detect time intent)
-            search_query = query
-            topic = "general"
-            if self.llm:
-                try:
-                    analysis_msgs = [
-                        {"role": "system", "content": f"Today is {today}. Extract a search-optimized query from the user input. Return JSON: {{\"query\": \"optimized search query with dates if relevant\", \"topic\": \"news\" or \"general\"}}. JSON only."},
+        if self.tavily_key:
+            try:
+                # Optimize query with LLM
+                search_query = query
+                topic = "general"
+                if self.llm:
+                    try:
+                        analysis_msgs = [
+                            {"role": "system", "content": f"Today is {today}. Extract a search-optimized query from the user input. Return JSON: {{\"query\": \"optimized search query with dates if relevant\", \"topic\": \"news\" or \"general\"}}. JSON only."},
+                            {"role": "user", "content": query},
+                        ]
+                        analysis = await llm_call_with_retry(self.llm, analysis_msgs, timeout=10)
+                        json_match = re.search(r'\{[^{}]*\}', analysis, re.DOTALL)
+                        if json_match:
+                            parsed = json.loads(json_match.group())
+                            search_query = parsed.get("query", query)
+                            topic = parsed.get("topic", "general")
+                    except Exception:
+                        pass
+
+                results = await self._tavily_search(search_query, topic=topic)
+                tavily_answer = results.get("answer", "")
+                search_results = results.get("results", [])
+                search_succeeded = True
+            except Exception as e:
+                print(f"  [InternetAgent] Tavily failed: {e} — falling back to LLM")
+
+        # Step 2: Synthesize with LLM (using search results or general knowledge)
+        if self.llm:
+            try:
+                if search_succeeded and search_results:
+                    # Search results available — synthesize
+                    sources = "\n".join([
+                        f"- {r.get('title', '')}: {r.get('content', '')[:300]} ({r.get('url', '')})"
+                        for r in search_results[:5]
+                    ])
+                    synth_msgs = [
+                        {"role": "system", "content": f"Today is {today}. You are a search assistant. Answer the user's question based on the search results. Cite sources with URLs. If data is old, note the date. Respond in the same language as the user's query."},
+                        {"role": "user", "content": f"Question: {query}\n\nSearch summary: {tavily_answer}\n\nSearch results:\n{sources}\n\nProvide a clear, concise answer with sources."},
+                    ]
+                else:
+                    # No search results — use LLM general knowledge
+                    synth_msgs = [
+                        {"role": "system", "content": f"Today is {today}. You are a helpful assistant. The internet search is currently unavailable, so answer using your general knowledge. Be honest about limitations — mention that real-time data (prices, exchange rates) may not be current. Respond in the same language as the user's query."},
                         {"role": "user", "content": query},
                     ]
-                    analysis = await llm_call_with_retry(self.llm, analysis_msgs, timeout=10)
-                    json_match = re.search(r'\{[^{}]*\}', analysis, re.DOTALL)
-                    if json_match:
-                        parsed = json.loads(json_match.group())
-                        search_query = parsed.get("query", query)
-                        topic = parsed.get("topic", "general")
-                except Exception:
-                    pass  # Use original query
 
-            # Step 2: Search
-            results = await self._tavily_search(search_query, topic=topic)
-            tavily_answer = results.get("answer", "")
-            search_results = results.get("results", [])
-
-            # Step 3: Synthesize with LLM
-            if self.llm and search_results:
-                sources = "\n".join([
-                    f"- {r.get('title', '')}: {r.get('content', '')[:300]} ({r.get('url', '')})"
-                    for r in search_results[:5]
-                ])
-                synth_msgs = [
-                    {"role": "system", "content": f"Today is {today}. You are a search assistant. Answer the user's question based on the search results. Cite sources with URLs. If data is old, note the date. Respond in the same language as the user's query."},
-                    {"role": "user", "content": f"Question: {query}\n\nTavily summary: {tavily_answer}\n\nSearch results:\n{sources}\n\nProvide a clear, concise answer with sources."},
-                ]
                 answer = await llm_call_with_retry(self.llm, synth_msgs, timeout=20)
-            elif tavily_answer:
-                answer = tavily_answer
-            else:
-                answer = "No results found."
+                return AgentResponse(
+                    type=AgentResponseType.SUCCESS,
+                    content={"answer": answer},
+                    message="Search complete" if search_succeeded else "Answered with general knowledge (search unavailable)",
+                )
+            except Exception as e:
+                return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="LLM error")
 
-            return AgentResponse(
-                type=AgentResponseType.SUCCESS,
-                content={"answer": answer},
-                message="Search complete",
-            )
-        except Exception as e:
-            return AgentResponse(type=AgentResponseType.ERROR, content={"error": str(e)}, message="Search error")
+        return AgentResponse(
+            type=AgentResponseType.ERROR,
+            content={"error": "No LLM or search API available"},
+            message="No backend available",
+        )
 
 
 # ═══════════════════════════════════════════
