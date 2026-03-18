@@ -2,7 +2,7 @@
 LogosAI Sample ACP Server — 6 agents on port 8888.
 
 Agents:
-  - LLM Chat Agent      — General conversation (Gemini/OpenAI)
+  - LLM Search Agent    — General conversation (Gemini/OpenAI)
   - Calculator Agent     — Math expressions
   - Translation Agent    — Multi-language translation
   - Code Agent           — Code generation and explanation
@@ -79,14 +79,14 @@ async def llm_call_with_retry(llm, messages, timeout=30, max_retries=3):
 
 
 # ═══════════════════════════════════════════
-# Agent 1: LLM Chat Agent
+# Agent 1: LLM Search Agent
 # ═══════════════════════════════════════════
 class LLMChatAgent(LogosAIAgent):
     """General-purpose conversational agent powered by LLM."""
 
     def __init__(self):
         config = AgentConfig(
-            name="LLM Chat Agent",
+            name="LLM Search Agent",
             agent_type=AgentType.CUSTOM,
             description="General conversation, Q&A, knowledge queries, reasoning, and creative tasks. Handles any topic.",
         )
@@ -331,7 +331,7 @@ class InternetSearchAgent(LogosAIAgent):
 
     def __init__(self):
         config = AgentConfig(
-            name="Internet Search Agent",
+            name="Internet Agent",
             agent_type=AgentType.CUSTOM,
             description="Searches the internet for real-time information: news, weather, prices, current events, and factual queries.",
         )
@@ -554,12 +554,12 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
         elif any(kw in q_lower for kw in ["작성", "이메일", "보고서", "write", "email", "report", "letter"]):
             agent_id = "writing_agent"
         elif any(kw in q_lower for kw in ["검색", "찾아", "search", "뉴스", "news", "날씨", "weather", "오늘", "today", "현재", "최신", "가격", "price", "환율", "주가"]):
-            agent_id = "internet_search_agent" if "internet_search_agent" in AGENTS else "llm_chat_agent"
+            agent_id = "internet_agent" if "internet_agent" in AGENTS else "llm_search_agent"
         else:
-            agent_id = "llm_chat_agent"  # Default to general chat
+            agent_id = "llm_search_agent"  # Default to general chat
 
     if agent_id not in AGENTS:
-        agent_id = "llm_chat_agent"
+        agent_id = "llm_search_agent"
 
     agent = AGENTS[agent_id]
 
