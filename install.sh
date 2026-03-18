@@ -917,13 +917,17 @@ for PORT in 8888 8090 8010; do
     kill_port $PORT
 done
 
-# Load API keys from logosai-api/.env for ACP server
-# Read specific keys only (don't source entire .env — JSON arrays break shell)
-_env_val() { grep "^$1=" "$DIR/logosai-api/.env" 2>/dev/null | head -1 | sed "s/^$1=//"; }
-_GK="$(_env_val GOOGLE_API_KEY)"
-_OK="$(_env_val OPENAI_API_KEY)"
-_TK="$(_env_val TAVILY_API_KEY)"
-_AK="$(_env_val ANTHROPIC_API_KEY)"
+# Load API keys from logosai-api/.env for ACP and logos_api processes
+# Ontology reads os.getenv(), not pydantic .env, so we must export these
+_ENV_FILE="$DIR/logosai-api/.env"
+_GK="$(grep '^GOOGLE_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+_OK="$(grep '^OPENAI_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+_TK="$(grep '^TAVILY_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+_AK="$(grep '^ANTHROPIC_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+
+# Verify keys loaded
+[ -n "$_GK" ] && echo -e "  ${DIM}GOOGLE_API_KEY loaded${NC}" || echo -e "  ${R}GOOGLE_API_KEY not found in .env${NC}"
+[ -n "$_TK" ] && echo -e "  ${DIM}TAVILY_API_KEY loaded${NC}" || echo -e "  ${DIM}TAVILY_API_KEY not set (internet search disabled)${NC}"
 
 # ACP server (pass keys explicitly)
 (cd "$DIR/logosai-framework/samples" && \
@@ -939,8 +943,13 @@ echo -e "  ${G}●${NC} ACP Server     ${B}http://localhost:8888${NC}  ${DIM}PID
 
 # logos_api (cd into dir so .env is found by pydantic-settings)
 # PYTHONPATH=$DIR so 'from ontology.xxx' resolves via symlink ontology -> logosai-ontology
+# Pass API keys as env vars (ontology reads os.getenv, not pydantic .env)
 (cd "$DIR/logosai-api" && \
     PYTHONPATH="$DIR:$DIR/logosai-framework:$PYTHONPATH" \
+    GOOGLE_API_KEY="$_GK" \
+    OPENAI_API_KEY="$_OK" \
+    TAVILY_API_KEY="$_TK" \
+    ANTHROPIC_API_KEY="$_AK" \
     nohup "$DIR/.venv/bin/python" -m uvicorn app.main:app \
     --host 0.0.0.0 --port 8090 \
     >> "$DIR/logs/api.log" 2>&1 &)
