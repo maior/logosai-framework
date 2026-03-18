@@ -391,6 +391,11 @@ echo -ne "  ${DIM}Installing logos_web... (this may take 1-2 min)${NC}\r"
 (cd logosai-web && npm install --loglevel=error 2>&1 | grep -iE "error|ERR" | head -3)
 ok "${W}logos_web${NC} dependencies"
 
+# Build frontend for production (faster startup, no black-text flash)
+echo -ne "  ${DIM}Building logos_web for production...${NC}\r"
+(cd logosai-web && npx next build 2>&1 | tail -1)
+ok "${W}logos_web${NC} production build"
+
 echo ""
 info "All dependencies installed"
 
@@ -907,17 +912,19 @@ for PORT in 8888 8090 8010; do
 done
 
 # Load API keys from logosai-api/.env for ACP server
-_load_env_key() { grep "^$1=" "$DIR/logosai-api/.env" 2>/dev/null | cut -d= -f2-; }
-export GOOGLE_API_KEY="${GOOGLE_API_KEY:-$(_load_env_key GOOGLE_API_KEY)}"
-export OPENAI_API_KEY="${OPENAI_API_KEY:-$(_load_env_key OPENAI_API_KEY)}"
-export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-$(_load_env_key ANTHROPIC_API_KEY)}"
-export TAVILY_API_KEY="${TAVILY_API_KEY:-$(_load_env_key TAVILY_API_KEY)}"
+# Source .env directly — most reliable way to load all keys
+if [ -f "$DIR/logosai-api/.env" ]; then
+    set -a
+    . "$DIR/logosai-api/.env"
+    set +a
+fi
 
-# ACP server
+# ACP server (pass keys explicitly to ensure they reach the subprocess)
 (cd "$DIR/logosai-framework/samples" && \
     GOOGLE_API_KEY="$GOOGLE_API_KEY" \
     OPENAI_API_KEY="$OPENAI_API_KEY" \
     TAVILY_API_KEY="$TAVILY_API_KEY" \
+    ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     nohup "$DIR/.venv/bin/python" sample_acp_server.py \
     >> "$DIR/logs/acp.log" 2>&1 &)
 echo "$!" > "$DIR/logs/acp.pid"
@@ -935,10 +942,16 @@ echo "$!" > "$DIR/logs/api.pid"
 sleep 3
 echo -e "  ${G}●${NC} logos_api       ${B}http://localhost:8090${NC}  ${DIM}PID $(cat "$DIR/logs/api.pid")${NC}"
 
-# logos_web
-(cd "$DIR/logosai-web" && \
-    nohup npx next dev -p 8010 \
-    >> "$DIR/logs/web.log" 2>&1 &)
+# logos_web (use production build if available, fallback to dev)
+if [ -d "$DIR/logosai-web/.next" ]; then
+    (cd "$DIR/logosai-web" && \
+        nohup npx next start -p 8010 \
+        >> "$DIR/logs/web.log" 2>&1 &)
+else
+    (cd "$DIR/logosai-web" && \
+        nohup npx next dev -p 8010 \
+        >> "$DIR/logs/web.log" 2>&1 &)
+fi
 echo "$!" > "$DIR/logs/web.pid"
 sleep 5
 echo -e "  ${G}●${NC} logos_web       ${B}http://localhost:8010${NC}  ${DIM}PID $(cat "$DIR/logs/web.pid")${NC}"
