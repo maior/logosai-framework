@@ -350,22 +350,26 @@ class InternetSearchAgent(LogosAIAgent):
         return bool(self.tavily_key)
 
     async def _tavily_search(self, query: str, topic: str = "general", max_results: int = 5) -> dict:
-        """Call Tavily Search API."""
+        """Call Tavily Search API with Bearer token authentication."""
         import aiohttp
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "api_key": self.tavily_key,
-                "query": query,
-                "search_depth": "basic",
-                "include_answer": True,
-                "max_results": max_results,
-                "topic": topic,
-            }
+        headers = {
+            "Authorization": f"Bearer {self.tavily_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "query": query,
+            "search_depth": "basic",
+            "include_answer": True,
+            "max_results": max_results,
+            "topic": topic,
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.post("https://api.tavily.com/search", json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    raise Exception(f"Tavily API error: {resp.status}")
+                    body = await resp.text()
+                    raise Exception(f"Tavily API error: {resp.status} — {body[:100]}")
 
     async def process(self, query: str, context=None) -> AgentResponse:
         if not self.tavily_key:
