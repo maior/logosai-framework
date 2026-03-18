@@ -918,19 +918,19 @@ for PORT in 8888 8090 8010; do
 done
 
 # Load API keys from logosai-api/.env for ACP server
-# Source .env directly — most reliable way to load all keys
-if [ -f "$DIR/logosai-api/.env" ]; then
-    set -a
-    . "$DIR/logosai-api/.env"
-    set +a
-fi
+# Read specific keys only (don't source entire .env — JSON arrays break shell)
+_env_val() { grep "^$1=" "$DIR/logosai-api/.env" 2>/dev/null | head -1 | sed "s/^$1=//"; }
+_GK="$(_env_val GOOGLE_API_KEY)"
+_OK="$(_env_val OPENAI_API_KEY)"
+_TK="$(_env_val TAVILY_API_KEY)"
+_AK="$(_env_val ANTHROPIC_API_KEY)"
 
-# ACP server (pass keys explicitly to ensure they reach the subprocess)
+# ACP server (pass keys explicitly)
 (cd "$DIR/logosai-framework/samples" && \
-    GOOGLE_API_KEY="$GOOGLE_API_KEY" \
-    OPENAI_API_KEY="$OPENAI_API_KEY" \
-    TAVILY_API_KEY="$TAVILY_API_KEY" \
-    ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    GOOGLE_API_KEY="$_GK" \
+    OPENAI_API_KEY="$_OK" \
+    TAVILY_API_KEY="$_TK" \
+    ANTHROPIC_API_KEY="$_AK" \
     nohup "$DIR/.venv/bin/python" sample_acp_server.py \
     >> "$DIR/logs/acp.log" 2>&1 &)
 echo "$!" > "$DIR/logs/acp.pid"
