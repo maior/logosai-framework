@@ -726,6 +726,14 @@ if [ -e /dev/tty ]; then
 
     echo ""
 
+    # ── Telegram Bot ──
+    dim "  ── Telegram Bot ──"
+    dim "  Connect LogosAI to Telegram for mobile chat."
+    dim "  Create bot: ${W}@BotFather${NC} on Telegram → /newbot → get token"
+    ask_config "TELEGRAM_BOT_TOKEN" "Telegram Bot Token" "logosai-api/.env" "optional"
+
+    echo ""
+
     # ── Security (auto-generated) ──
     JWT_CURRENT=$(grep "^JWT_SECRET_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
     if [ -z "$JWT_CURRENT" ] || echo "$JWT_CURRENT" | grep -q "^your-"; then
@@ -970,6 +978,19 @@ fi
 echo "$!" > "$DIR/logs/web.pid"
 sleep 5
 echo -e "  ${G}●${NC} logos_web       ${B}http://localhost:8010${NC}  ${DIM}PID $(cat "$DIR/logs/web.pid")${NC}"
+
+# Telegram polling (if token configured)
+_TG_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+if [ -n "$_TG_TOKEN" ] && [ "$_TG_TOKEN" != "your-telegram-bot-token" ]; then
+    (cd "$DIR/logosai-api" && \
+        TELEGRAM_BOT_TOKEN="$_TG_TOKEN" \
+        GOOGLE_API_KEY="$_GK" \
+        nohup "$DIR/.venv/bin/python" scripts/telegram_poll.py \
+        >> "$DIR/logs/telegram.log" 2>&1 &)
+    echo "$!" > "$DIR/logs/telegram.pid"
+    sleep 2
+    echo -e "  ${G}●${NC} Telegram Bot   ${DIM}polling mode${NC}"
+fi
 
 echo ""
 echo -e "  ${DIM}──────────────────────────────────────${NC}"
