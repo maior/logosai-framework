@@ -101,11 +101,18 @@ echo -e "    ${DIM}4.${NC} Set up PostgreSQL database & run migrations"
 echo -e "    ${DIM}5.${NC} Generate ${W}start.sh${NC} / ${W}stop.sh${NC} / ${W}status.sh${NC}"
 echo ""
 
+# Helper: read from /dev/tty (works even when piped from curl)
+ask() {
+    local prompt="$1" var="$2"
+    echo -ne "$prompt" >/dev/tty
+    read -r $var </dev/tty 2>/dev/null || true
+}
+
 # Confirm
-if [ -t 0 ]; then
-    echo -ne "  ${BOLD}Proceed with installation?${NC} ${DIM}[Y/n]${NC} "
-    read -n 1 -r
-    echo ""
+if [ -e /dev/tty ]; then
+    echo -ne "  ${BOLD}Proceed with installation?${NC} ${DIM}[Y/n]${NC} " >/dev/tty
+    read -n 1 -r REPLY </dev/tty 2>/dev/null || REPLY="y"
+    echo "" >/dev/tty
     if [[ $REPLY =~ ^[Nn]$ ]]; then
         echo -e "\n  ${DIM}Installation cancelled.${NC}\n"
         exit 0
@@ -121,61 +128,158 @@ step "Checking prerequisites"
 
 MISSING=0
 PG_OK=0
+OS_TYPE="unknown"
+if [ -f /etc/os-release ]; then
+    OS_TYPE="linux"
+    . /etc/os-release 2>/dev/null
+    DISTRO="${ID:-linux}"
+elif [[ "$(uname)" == "Darwin" ]]; then
+    OS_TYPE="macos"
+    DISTRO="macos"
+fi
 
-# Python
+# Helper: show install instructions per OS
+install_hint() {
+    local pkg="$1"
+    case "$pkg" in
+        python)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install python3.11 python3.11-venv python3-pip${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}brew install python@3.11${NC}"
+            else
+                dim "    Install: https://www.python.org/downloads/"
+            fi
+            ;;
+        node)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt install nodejs${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}brew install node@18${NC}"
+            else
+                dim "    Install: https://nodejs.org/"
+            fi
+            ;;
+        git)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install git${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}xcode-select --install${NC}"
+            fi
+            ;;
+        postgresql)
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install postgresql && sudo systemctl start postgresql${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Install: ${W}brew install postgresql@15 && brew services start postgresql@15${NC}"
+            fi
+            dim "    Or Docker: ${W}docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:15${NC}"
+            ;;
+    esac
+}
+
+# ── Python ──
 if command -v python3 &>/dev/null; then
     PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
     PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
     if [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 11 ]; then
         ok "Python ${W}$PY_VER${NC}"
+
+        # Check venv module (Ubuntu requires python3.x-venv package)
+        if ! python3 -c "import venv" 2>/dev/null; then
+            fail "Python venv module not found"
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install python${PY_VER}-venv${NC}"
+            fi
+            MISSING=1
+        fi
+
+        # Check pip
+        if ! python3 -m pip --version &>/dev/null; then
+            fail "pip not found"
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Install: ${W}sudo apt install python3-pip${NC}"
+            fi
+            MISSING=1
+        fi
     else
         fail "Python ${W}3.11+${NC} required ${DIM}(found $PY_VER)${NC}"
+        install_hint python
         MISSING=1
     fi
 else
     fail "python3 not found"
+    install_hint python
     MISSING=1
 fi
 
-# Node
+# ── Node.js ──
 if command -v node &>/dev/null; then
-    ok "Node.js ${W}$(node --version)${NC}"
+    NODE_VER_RAW=$(node --version | sed 's/^v//')
+    NODE_MAJOR=$(echo "$NODE_VER_RAW" | cut -d. -f1)
+    if [ "$NODE_MAJOR" -ge 18 ]; then
+        ok "Node.js ${W}v${NODE_VER_RAW}${NC}"
+    else
+        fail "Node.js ${W}18+${NC} required ${DIM}(found v${NODE_VER_RAW})${NC}"
+        install_hint node
+        MISSING=1
+    fi
 else
-    fail "Node.js not found ${DIM}— https://nodejs.org${NC}"
+    fail "Node.js not found"
+    install_hint node
     MISSING=1
 fi
 
-# npm
+# ── npm ──
 if command -v npm &>/dev/null; then
     ok "npm ${W}$(npm --version)${NC}"
 else
-    fail "npm not found"
+    fail "npm not found ${DIM}(usually installed with Node.js)${NC}"
     MISSING=1
 fi
 
-# Git
+# ── Git ──
 if command -v git &>/dev/null; then
     ok "Git ${W}$(git --version | cut -d' ' -f3)${NC}"
 else
     fail "git not found"
+    install_hint git
     MISSING=1
 fi
 
-# PostgreSQL
+# ── PostgreSQL ──
 if command -v psql &>/dev/null; then
-    ok "PostgreSQL ${W}$(psql --version | grep -oE '[0-9]+\.[0-9]+')${NC}"
+    PG_VER=$(psql --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    PG_MAJOR=$(echo "$PG_VER" | cut -d. -f1)
+    if [ "$PG_MAJOR" -ge 14 ]; then
+        ok "PostgreSQL ${W}$PG_VER${NC}"
+    else
+        warn "PostgreSQL ${W}14+${NC} recommended ${DIM}(found $PG_VER)${NC}"
+    fi
     PG_OK=1
+
+    # Check if PostgreSQL is actually running
+    if command -v pg_isready &>/dev/null; then
+        if pg_isready -q 2>/dev/null; then
+            ok "PostgreSQL server ${W}running${NC}"
+        else
+            warn "PostgreSQL installed but ${Y}not running${NC}"
+            if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+                dim "    Start: ${W}sudo systemctl start postgresql${NC}"
+            elif [ "$DISTRO" = "macos" ]; then
+                dim "    Start: ${W}brew services start postgresql@15${NC}"
+            fi
+        fi
+    fi
 elif command -v docker &>/dev/null; then
-    warn "psql not found — will use ${W}Docker${NC} for PostgreSQL"
+    ok "Docker ${W}$(docker --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)${NC}"
+    warn "PostgreSQL not found — will use ${W}Docker${NC} automatically"
     PG_OK=2
 else
-    fail "PostgreSQL not found"
+    fail "PostgreSQL and Docker both not found"
     echo ""
-    dim "  Install options:"
-    dim "    macOS:   brew install postgresql@15 && brew services start postgresql@15"
-    dim "    Ubuntu:  sudo apt install postgresql && sudo systemctl start postgresql"
-    dim "    Docker:  docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:15"
+    install_hint postgresql
     echo ""
     MISSING=1
 fi
@@ -183,6 +287,18 @@ fi
 if [ "$MISSING" -eq 1 ]; then
     echo ""
     fail "${BOLD}Missing prerequisites.${NC} Install them and try again."
+    if [ "$DISTRO" = "ubuntu" ] || [ "$DISTRO" = "debian" ]; then
+        echo ""
+        dim "  Quick install all (Ubuntu/Debian):"
+        dim "    ${W}sudo apt update && sudo apt install -y python3.11 python3.11-venv python3-pip git postgresql${NC}"
+        dim "    ${W}curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt install -y nodejs${NC}"
+        dim "    ${W}sudo systemctl start postgresql${NC}"
+    elif [ "$DISTRO" = "macos" ]; then
+        echo ""
+        dim "  Quick install all (macOS):"
+        dim "    ${W}brew install python@3.11 node@18 postgresql@15 git${NC}"
+        dim "    ${W}brew services start postgresql@15${NC}"
+    fi
     echo ""
     exit 1
 fi
@@ -227,6 +343,15 @@ done
 echo ""
 info "${W}4${NC} repositories ready"
 
+# Create symlinks to match development directory structure
+# (repos are cloned as logosai-xxx but code imports use ontology, logosai, logos_api, logos_web)
+_symlink() { [ ! -e "$WORKDIR/$2" ] && ln -sf "$1" "$WORKDIR/$2"; }
+_symlink logosai-ontology  ontology
+_symlink logosai-framework logosai
+_symlink logosai-api       logos_api
+_symlink logosai-web       logos_web
+ok "Symlinks created ${DIM}(ontology, logosai, logos_api, logos_web)${NC}"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 3: Install dependencies
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -240,35 +365,34 @@ fi
 source .venv/bin/activate
 ok "Python venv ${DIM}(.venv — $(python --version))${NC}"
 
-echo -ne "  ${DIM}Upgrading pip...${NC}\r"
-pip install --upgrade pip -q 2>/dev/null
-echo -ne "\r$(printf '%-60s' '')\r"
+info "Upgrading pip and build tools..."
+pip install --upgrade pip setuptools wheel hatchling -q 2>&1 | tail -1
+echo ""
 
 # logosai framework
-echo -ne "  ${DIM}◇ Installing logosai framework...${NC}"
-pip install -e logosai-framework/ -q 2>/dev/null
-echo -ne "\r$(printf '%-60s' '')\r"
-ok "${W}logosai${NC} framework ${DIM}(pip install -e)${NC}"
+echo -ne "  ${DIM}Installing logosai framework...${NC}\r"
+pip install -e logosai-framework/ -q 2>&1 | grep -iE "error|ERROR" | head -3
+ok "${W}logosai${NC} framework"
 
 # ontology
 if [ -f logosai-ontology/requirements.txt ]; then
-    echo -ne "  ${DIM}◇ Installing ontology dependencies...${NC}"
-    pip install -r logosai-ontology/requirements.txt -q 2>/dev/null
-    echo -ne "\r$(printf '%-60s' '')\r"
+    echo -ne "  ${DIM}Installing ontology dependencies...${NC}\r"
+    pip install -r logosai-ontology/requirements.txt -q 2>&1 | grep -iE "error|ERROR" | head -3
     ok "${W}ontology${NC} dependencies"
 fi
 
 # logos_api
-echo -ne "  ${DIM}◇ Installing logos_api dependencies...${NC}"
-pip install -e logosai-api/ -q 2>/dev/null
-echo -ne "\r$(printf '%-60s' '')\r"
-ok "${W}logos_api${NC} dependencies ${DIM}(FastAPI, SQLAlchemy, etc.)${NC}"
+echo -ne "  ${DIM}Installing logos_api... (this may take 1-2 min)${NC}\r"
+pip install -e logosai-api/ -q 2>&1 | grep -iE "error|ERROR" | head -3
+ok "${W}logos_api${NC} dependencies"
 
 # Node
-echo -ne "  ${DIM}◇ Running npm install for logos_web...${NC}"
-(cd logosai-web && npm install --silent 2>/dev/null)
-echo -ne "\r$(printf '%-60s' '')\r"
-ok "${W}logos_web${NC} dependencies ${DIM}(Next.js, React, Tailwind)${NC}"
+echo -ne "  ${DIM}Installing logos_web... (this may take 1-2 min)${NC}\r"
+(cd logosai-web && npm install --loglevel=error 2>&1 | grep -iE "error|ERR" | head -3)
+ok "${W}logos_web${NC} dependencies"
+
+# NOTE: logos_web production build is done AFTER .env.local is configured (Step 4)
+# so that NEXT_PUBLIC_* env vars are included in the build
 
 echo ""
 info "All dependencies installed"
@@ -278,100 +402,451 @@ info "All dependencies installed"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 step "Setting up database"
 
-# Docker PostgreSQL if needed
+# Create .env files first (needed for DB config)
+if [ ! -f logosai-api/.env ]; then
+    cp logosai-api/.env.example logosai-api/.env
+    ok "Config ${W}logosai-api/.env${NC} created"
+else
+    ok "Config ${W}logosai-api/.env${NC} exists"
+fi
+
+if [ ! -f logosai-web/.env.local ]; then
+    cp logosai-web/.env.example logosai-web/.env.local
+    ok "Config ${W}logosai-web/.env.local${NC} created"
+else
+    ok "Config ${W}logosai-web/.env.local${NC} exists"
+fi
+
+# set_env_key defined early for DB setup
+set_env_key() {
+    local key="$1" value="$2" file="$3"
+    # Use Python for reliable .env updates (handles special chars in URLs, passwords)
+    python3 -c "
+import sys
+key, value, filepath = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = []
+found = False
+try:
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+except FileNotFoundError:
+    pass
+with open(filepath, 'w') as f:
+    for line in lines:
+        if line.startswith(key + '='):
+            f.write(f'{key}={value}\n')
+            found = True
+        else:
+            f.write(line)
+    if not found:
+        f.write(f'{key}={value}\n')
+" "$key" "$value" "$file"
+}
+
+# Helper to test PostgreSQL connection
+test_pg_connection() {
+    local user="$1" pass="$2" host="$3" port="$4" db="$5"
+    PGPASSWORD="$pass" psql -h "$host" -p "$port" -U "$user" -d "$db" -c "SELECT 1" >/dev/null 2>&1
+}
+
+echo ""
+
 if [ "$PG_OK" -eq 2 ]; then
-    # Check if container exists but is stopped
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
-        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
-            echo -ne "  ${DIM}◇ Restarting stopped PostgreSQL container...${NC}"
-            docker start logosai-pg >/dev/null 2>&1
-            echo -ne "\r$(printf '%-60s' '')\r"
-            ok "PostgreSQL ${DIM}(Docker: logosai-pg restarted)${NC}"
-        else
-            ok "PostgreSQL Docker container running"
-        fi
-    else
-        echo -ne "  ${DIM}◇ Starting PostgreSQL via Docker...${NC}"
-        docker run -d --name logosai-pg \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=postgres \
-            -e POSTGRES_DB=logosai \
-            -p 5432:5432 \
-            postgres:15-alpine >/dev/null 2>&1
-        echo -ne "\r$(printf '%-60s' '')\r"
-        ok "PostgreSQL ${DIM}(Docker: logosai-pg — postgres:postgres@localhost:5432)${NC}"
+    # ── Docker PostgreSQL ──
+    dim "  ── Docker PostgreSQL ──"
+    echo ""
+
+    DB_USER="postgres"
+    DB_PASS="postgres"
+    DB_HOST="localhost"
+    DB_PORT="5432"
+    DB_NAME="logosai"
+
+    if [ -e /dev/tty ]; then
+        ask "  ${C}◆${NC} DB password ${DIM}(default: postgres):${NC} " INPUT_DB_PASS
+        DB_PASS="${INPUT_DB_PASS:-postgres}"
     fi
 
-    # Wait for PostgreSQL to accept connections
-    echo -ne "  ${DIM}◇ Waiting for PostgreSQL to accept connections...${NC}"
-    for i in $(seq 1 15); do
-        if docker exec logosai-pg pg_isready -U postgres >/dev/null 2>&1; then
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q logosai-pg; then
+            docker start logosai-pg >/dev/null 2>&1
+            ok "PostgreSQL container restarted"
+        else
+            ok "PostgreSQL container running"
+        fi
+    else
+        docker run -d --name logosai-pg \
+            -e POSTGRES_USER="$DB_USER" \
+            -e POSTGRES_PASSWORD="$DB_PASS" \
+            -e POSTGRES_DB="$DB_NAME" \
+            -p ${DB_PORT}:5432 \
+            postgres:15-alpine >/dev/null 2>&1
+        ok "PostgreSQL started ${DIM}(Docker: logosai-pg)${NC}"
+    fi
+
+    # Wait for ready
+    echo -ne "  ${DIM}  Waiting for PostgreSQL...${NC}"
+    for i in $(seq 1 20); do
+        if docker exec logosai-pg pg_isready -U "$DB_USER" >/dev/null 2>&1; then
             echo -ne "\r$(printf '%-60s' '')\r"
             ok "PostgreSQL is ready"
             break
         fi
         sleep 1
     done
-fi
 
-# Create database
-if [ "$PG_OK" -eq 1 ] && command -v createdb &>/dev/null; then
-    # Local PostgreSQL — use createdb
-    createdb logosai 2>/dev/null \
-        && ok "Database ${W}logosai${NC} created" \
-        || ok "Database ${W}logosai${NC} exists"
-elif [ "$PG_OK" -eq 2 ]; then
-    # Docker PostgreSQL — POSTGRES_DB=logosai already creates it
-    # But verify it exists, create if somehow missing
-    docker exec logosai-pg psql -U postgres -lqt 2>/dev/null | grep -qw logosai \
-        && ok "Database ${W}logosai${NC} exists ${DIM}(Docker)${NC}" \
-        || { docker exec logosai-pg createdb -U postgres logosai 2>/dev/null; ok "Database ${W}logosai${NC} created ${DIM}(Docker)${NC}"; }
-fi
+    # Set DATABASE_URL
+    DB_URL="postgresql+asyncpg://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+    set_env_key "DATABASE_URL" "$DB_URL" "logosai-api/.env"
+    ok "DATABASE_URL configured ${DIM}(Docker)${NC}"
 
-# .env files — set correct DATABASE_URL based on PostgreSQL mode
-if [ ! -f logosai-api/.env ]; then
-    cp logosai-api/.env.example logosai-api/.env
-    ok "Config ${W}logosai-api/.env${NC} ${DIM}(from .env.example)${NC}"
-else
-    ok "Config ${W}logosai-api/.env${NC} exists"
-fi
-
-# Ensure DATABASE_URL is set correctly in .env
-if [ "$PG_OK" -eq 2 ]; then
-    # Docker mode — make sure .env points to localhost:5432 with postgres:postgres
-    if grep -q "DATABASE_URL" logosai-api/.env 2>/dev/null; then
-        dim "  DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/logosai"
-    fi
 elif [ "$PG_OK" -eq 1 ]; then
-    dim "  DATABASE_URL: check logosai-api/.env matches your PostgreSQL credentials"
+    # ── Local PostgreSQL ──
+    dim "  ── Local PostgreSQL ──"
+    echo ""
+
+    DB_USER="postgres"
+    DB_PASS=""
+    DB_HOST="localhost"
+    DB_PORT="5432"
+    DB_NAME="logosai"
+    DB_CONNECTED=false
+
+    if [ -e /dev/tty ]; then
+        ask "  ${C}◆${NC} DB host ${DIM}(default: localhost):${NC} " INPUT_DB_HOST
+        DB_HOST="${INPUT_DB_HOST:-localhost}"
+
+        ask "  ${C}◆${NC} DB port ${DIM}(default: 5432):${NC} " INPUT_DB_PORT
+        DB_PORT="${INPUT_DB_PORT:-5432}"
+
+        ask "  ${C}◆${NC} DB user ${DIM}(default: postgres):${NC} " INPUT_DB_USER
+        DB_USER="${INPUT_DB_USER:-postgres}"
+
+        ask "  ${C}◆${NC} DB password ${DIM}(required):${NC} " INPUT_DB_PASS
+        DB_PASS="${INPUT_DB_PASS}"
+
+        ask "  ${C}◆${NC} DB name ${DIM}(default: logosai):${NC} " INPUT_DB_NAME
+        DB_NAME="${INPUT_DB_NAME:-logosai}"
+    fi
+
+    echo ""
+
+    # ── Connection test with retry loop ──
+    for attempt in 1 2 3; do
+        dim "  Testing connection... (attempt $attempt)"
+
+        if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+            ok "PostgreSQL connection ${G}successful${NC}"
+            DB_CONNECTED=true
+            break
+        fi
+
+        # Connection failed
+        if [ "$attempt" -eq 1 ]; then
+            # First failure — check if it's a peer auth issue
+            if sudo -u "$DB_USER" psql -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+                warn "PostgreSQL uses peer auth — password login not configured"
+                echo ""
+                dim "  LogosAI needs TCP password authentication."
+                dim "  This will set a password and update pg_hba.conf."
+                echo ""
+
+                if [ -z "$DB_PASS" ]; then
+                    ask "  ${C}◆${NC} Set password for DB user '${DB_USER}': " DB_PASS
+                    DB_PASS="${DB_PASS:-logosai}"
+                fi
+
+                # Set password in PostgreSQL
+                sudo -u postgres psql -c "ALTER USER ${DB_USER} PASSWORD '${DB_PASS}';" >/dev/null 2>&1 \
+                    && ok "Password set for user '${DB_USER}'" \
+                    || { warn "Could not set password — try manually: sudo -u postgres psql"; continue; }
+
+                # Enable md5 auth
+                PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" 2>/dev/null | tr -d ' ')
+                if [ -n "$PG_HBA" ] && [ -f "$PG_HBA" ]; then
+                    if ! grep -q "host.*all.*all.*127.0.0.1/32.*md5\|host.*all.*all.*127.0.0.1/32.*scram" "$PG_HBA" 2>/dev/null; then
+                        sudo sed -i '/^# IPv4 local connections/a host    all    all    127.0.0.1/32    md5' "$PG_HBA" 2>/dev/null
+                    fi
+                    sudo systemctl restart postgresql 2>/dev/null || sudo service postgresql restart 2>/dev/null
+                    sleep 2
+                    ok "PostgreSQL authentication configured (md5)"
+                fi
+                continue  # retry
+            fi
+        fi
+
+        # Other failures — ask to re-enter credentials
+        warn "Connection failed (user=${DB_USER} host=${DB_HOST}:${DB_PORT})"
+        if [ "$attempt" -lt 3 ] && [ -e /dev/tty ]; then
+            echo ""
+            dim "  Please re-enter credentials:"
+            ask "  ${C}◆${NC} DB user ${DIM}(current: ${DB_USER}):${NC} " INPUT_DB_USER
+            DB_USER="${INPUT_DB_USER:-$DB_USER}"
+            ask "  ${C}◆${NC} DB password: " INPUT_DB_PASS
+            DB_PASS="${INPUT_DB_PASS:-$DB_PASS}"
+            echo ""
+        fi
+    done
+
+    if [ "$DB_CONNECTED" = true ]; then
+        # Create database if not exists
+        if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt 2>/dev/null | grep -qw "$DB_NAME"; then
+            ok "Database ${W}${DB_NAME}${NC} exists"
+        else
+            PGPASSWORD="$DB_PASS" createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_NAME" 2>/dev/null \
+                && ok "Database ${W}${DB_NAME}${NC} created" \
+                || warn "Could not create database — run manually: createdb $DB_NAME"
+        fi
+    else
+        warn "Could not connect to PostgreSQL after 3 attempts"
+        dim "  You can fix this later by editing: $WORKDIR/logosai-api/.env"
+        dim "  Then run: cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
+    fi
+
+    # Set DATABASE_URL
+    DB_URL="postgresql+asyncpg://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+    set_env_key "DATABASE_URL" "$DB_URL" "logosai-api/.env"
+
+    # Verify saved correctly
+    SAVED_URL=$(grep "^DATABASE_URL=" logosai-api/.env 2>/dev/null | head -1 | cut -d= -f2-)
+    if echo "$SAVED_URL" | grep -q "${DB_HOST}:${DB_PORT}/${DB_NAME}"; then
+        ok "DATABASE_URL configured → ${DIM}${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}${NC}"
+    else
+        warn "DATABASE_URL may not be correct"
+        dim "  Saved: $SAVED_URL"
+        dim "  Expected user: $DB_USER, host: $DB_HOST, db: $DB_NAME"
+    fi
 fi
 
-if [ ! -f logosai-web/.env.local ]; then
-    cp logosai-web/.env.example logosai-web/.env.local
-    ok "Config ${W}logosai-web/.env.local${NC} ${DIM}(from .env.example)${NC}"
-else
-    ok "Config ${W}logosai-web/.env.local${NC} exists"
+dim "  ${DIM}Stored: $(grep '^DATABASE_URL=' logosai-api/.env 2>/dev/null | sed 's/.*:.*@/@/' | head -1)${NC}"
+
+# ── API Key Configuration ──
+# Ask for API keys if not already set (reads from /dev/tty so works with curl|bash)
+_needs_key_setup=false
+for placeholder in "your-google-api-key" "your-openai-api-key" "your-anthropic-api-key"; do
+    grep -q "$placeholder" logosai-api/.env 2>/dev/null && _needs_key_setup=true
+done
+# Also check if GOOGLE_API_KEY is empty or missing
+if ! grep -q "^GOOGLE_API_KEY=.\+" logosai-api/.env 2>/dev/null; then
+    _needs_key_setup=true
+fi
+
+# ── Configuration Setup ──
+if [ -e /dev/tty ]; then
+    echo ""
+    info "Configuration ${DIM}(press Enter to skip / keep default)${NC}"
+    echo ""
+
+    # set_env_key already defined in Step 4
+
+    ask_config() {
+        local key="$1" label="$2" file="$3" required="$4"
+        local current=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+        if [ -n "$current" ] && ! echo "$current" | grep -qE "^your-|^generate-"; then
+            return
+        fi
+        local marker=""
+        [ "$required" = "required" ] && marker="${Y}*${NC}" || marker="${DIM}optional${NC}"
+        ask "  ${C}◆${NC} ${label} [${marker}]: " _INPUT
+        if [ -n "$_INPUT" ]; then
+            set_env_key "$key" "$_INPUT" "$file"
+            ok "${label} saved"
+        else
+            if [ "$required" = "required" ]; then
+                dim "  Skipped — set ${key} in $(basename $file) later"
+            fi
+        fi
+    }
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Usage Mode Selection
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    dim "  ── Usage Mode ──"
+    echo ""
+    echo -e "    ${W}1)${NC} ${G}Personal${NC}  — Single user, no Google OAuth needed" >/dev/tty
+    echo -e "    ${W}2)${NC} ${B}Team${NC}      — Multi-user with Google OAuth login" >/dev/tty
+    echo "" >/dev/tty
+    ask "  ${C}◆${NC} Select mode ${DIM}[1]:${NC} " USAGE_MODE
+    USAGE_MODE="${USAGE_MODE:-1}"
+
+    if [ "$USAGE_MODE" = "1" ]; then
+        # ── Personal Mode ──
+        ok "Personal mode selected"
+        echo ""
+        ask "  ${C}◆${NC} Your email ${DIM}(for login):${NC} " PERSONAL_EMAIL
+        if [ -n "$PERSONAL_EMAIL" ]; then
+            set_env_key "AUTH_MODE" "personal" "logosai-api/.env"
+            set_env_key "PERSONAL_USER_EMAIL" "$PERSONAL_EMAIL" "logosai-api/.env"
+            set_env_key "NEXT_PUBLIC_AUTH_MODE" "personal" "logosai-web/.env.local"
+            set_env_key "NEXT_PUBLIC_PERSONAL_USER_EMAIL" "$PERSONAL_EMAIL" "logosai-web/.env.local"
+            ok "Personal mode: ${W}${PERSONAL_EMAIL}${NC}"
+        else
+            warn "No email provided — you can set PERSONAL_USER_EMAIL in .env later"
+            set_env_key "AUTH_MODE" "personal" "logosai-api/.env"
+            set_env_key "NEXT_PUBLIC_AUTH_MODE" "personal" "logosai-web/.env.local"
+        fi
+    else
+        # ── Team Mode ──
+        ok "Team mode selected"
+        set_env_key "AUTH_MODE" "team" "logosai-api/.env"
+        set_env_key "NEXT_PUBLIC_AUTH_MODE" "team" "logosai-web/.env.local"
+
+        echo ""
+
+        # Google OAuth (required for team mode)
+        dim "  ── Google OAuth (for login) ──"
+        ask_config "GOOGLE_CLIENT_ID" "Google Client ID" "logosai-api/.env" "required"
+        ENTERED_CLIENT_ID=$(grep "^GOOGLE_CLIENT_ID=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+        if [ -n "$ENTERED_CLIENT_ID" ] && ! echo "$ENTERED_CLIENT_ID" | grep -q "^your-"; then
+            set_env_key "GOOGLE_CLIENT_ID" "$ENTERED_CLIENT_ID" "logosai-web/.env.local"
+        fi
+
+        ask_config "GOOGLE_CLIENT_SECRET" "Google Client Secret" "logosai-api/.env" "required"
+        ENTERED_CLIENT_SECRET=$(grep "^GOOGLE_CLIENT_SECRET=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+        if [ -n "$ENTERED_CLIENT_SECRET" ] && ! echo "$ENTERED_CLIENT_SECRET" | grep -q "^your-"; then
+            set_env_key "GOOGLE_CLIENT_SECRET" "$ENTERED_CLIENT_SECRET" "logosai-web/.env.local"
+        fi
+    fi
+
+    echo ""
+
+    # ── LLM API Keys ──
+    dim "  ── LLM API Keys ──"
+    ask_config "GOOGLE_API_KEY" "Google API Key (Gemini)" "logosai-api/.env" "required"
+    ask_config "OPENAI_API_KEY" "OpenAI API Key" "logosai-api/.env" "optional"
+    ask_config "ANTHROPIC_API_KEY" "Anthropic API Key" "logosai-api/.env" "optional"
+
+    echo ""
+
+    # ── Search API Key ──
+    dim "  ── Internet Search ──"
+    dim "  Enables real-time search: news, weather, prices, etc."
+    dim "  Free key: ${W}https://tavily.com${NC}"
+    ask_config "TAVILY_API_KEY" "Tavily API Key" "logosai-api/.env" "optional"
+
+    echo ""
+
+    # ── Telegram Bot ──
+    dim "  ── Telegram Bot ──"
+    dim "  Connect LogosAI to Telegram for mobile chat."
+    dim "  Create bot: ${W}@BotFather${NC} on Telegram → /newbot → get token"
+    ask_config "TELEGRAM_BOT_TOKEN" "Telegram Bot Token" "logosai-api/.env" "optional"
+
+    echo ""
+
+    # ── Security (auto-generated) ──
+    JWT_CURRENT=$(grep "^JWT_SECRET_KEY=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+    if [ -z "$JWT_CURRENT" ] || echo "$JWT_CURRENT" | grep -q "^your-"; then
+        JWT_GENERATED=$(openssl rand -base64 32 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+        set_env_key "JWT_SECRET_KEY" "$JWT_GENERATED" "logosai-api/.env"
+        ok "JWT secret auto-generated"
+    fi
+
+    NEXTAUTH_CURRENT=$(grep "^NEXTAUTH_SECRET=" logosai-web/.env.local 2>/dev/null | cut -d= -f2-)
+    if [ -z "$NEXTAUTH_CURRENT" ] || echo "$NEXTAUTH_CURRENT" | grep -q "^generate-"; then
+        NEXTAUTH_GENERATED=$(openssl rand -base64 32 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+        set_env_key "NEXTAUTH_SECRET" "$NEXTAUTH_GENERATED" "logosai-web/.env.local"
+        ok "NextAuth secret auto-generated"
+    fi
+
+    echo ""
+
+    # ── Server URL Detection ──
+    dim "  ── Server URL ──"
+
+    SERVER_IP=""
+    if command -v hostname &>/dev/null; then
+        SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+    fi
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP="localhost"
+    fi
+
+    DEFAULT_URL="http://${SERVER_IP}:8010"
+    CURRENT_NEXTAUTH_URL=$(grep "^NEXTAUTH_URL=" logosai-web/.env.local 2>/dev/null | cut -d= -f2-)
+
+    if [ "$CURRENT_NEXTAUTH_URL" = "http://localhost:8010" ] || [ -z "$CURRENT_NEXTAUTH_URL" ]; then
+        dim "  Detected server IP: ${W}${SERVER_IP}${NC}"
+        ask "  ${C}◆${NC} Server URL ${DIM}(default: ${DEFAULT_URL}):${NC} " INPUT_URL
+        FINAL_URL="${INPUT_URL:-$DEFAULT_URL}"
+
+        set_env_key "NEXTAUTH_URL" "$FINAL_URL" "logosai-web/.env.local"
+        set_env_key "NEXT_PUBLIC_API_URL" "http://${SERVER_IP}:8090" "logosai-web/.env.local"
+
+        CURRENT_CORS=$(grep "^CORS_ORIGINS=" logosai-api/.env 2>/dev/null | cut -d= -f2-)
+        if ! echo "$CURRENT_CORS" | grep -q "$FINAL_URL"; then
+            NEW_CORS="[\"http://localhost:3000\",\"http://localhost:8000\",\"http://localhost:8010\",\"${FINAL_URL}\"]"
+            set_env_key "CORS_ORIGINS" "$NEW_CORS" "logosai-api/.env"
+        fi
+
+        ok "Server URL: ${W}${FINAL_URL}${NC}"
+        dim "  API URL: http://${SERVER_IP}:8090"
+        dim "  CORS updated"
+
+        if [ "$USAGE_MODE" != "1" ]; then
+            echo ""
+            warn "Google OAuth redirect URI must include:"
+            dim "  ${W}${FINAL_URL}/api/auth/callback/google${NC}"
+            dim "  Add this in Google Cloud Console → Credentials → OAuth Client ID"
+        fi
+    fi
+
+    echo ""
 fi
 
 # Migrations
-echo -ne "  ${DIM}◇ Running Alembic migrations...${NC}"
+echo ""
+info "Running database migrations..."
 MIGRATION_OUTPUT=$(cd logosai-api && python -m alembic upgrade head 2>&1) \
-    && { echo -ne "\r$(printf '%-60s' '')\r"; ok "Database migrations ${G}complete${NC}"; } \
+    && ok "Database migrations ${G}complete${NC}" \
     || {
-        echo -ne "\r$(printf '%-60s' '')\r"
         warn "Migrations failed"
-        echo ""
-        dim "  Possible causes:"
-        dim "    - PostgreSQL is not running or not accepting connections"
-        dim "    - DATABASE_URL in logosai-api/.env is incorrect"
-        dim "    - Database 'logosai' does not exist"
-        echo ""
-        dim "  To fix manually:"
-        dim "    1. Edit $WORKDIR/logosai-api/.env"
-        dim "    2. Set DATABASE_URL=postgresql+asyncpg://USER:PASS@HOST:5432/logosai"
-        dim "    3. Run: cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
-        echo ""
+        dim "  ${MIGRATION_OUTPUT}" 2>/dev/null | tail -3
+        dim ""
+        dim "  To fix: edit $WORKDIR/logosai-api/.env and re-run:"
+        dim "    cd $WORKDIR/logosai-api && ../.venv/bin/python -m alembic upgrade head"
     }
+
+# ── Post-install verification ──
+echo ""
+info "Verifying setup..."
+
+# Test DB connection via Python (uses the actual DATABASE_URL from .env)
+DB_TEST=$(cd logosai-api && python -c "
+import asyncio
+from app.config import settings
+from sqlalchemy.ext.asyncio import create_async_engine
+async def test():
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    async with engine.connect() as conn:
+        result = await conn.execute(__import__('sqlalchemy').text('SELECT 1'))
+        return result.scalar()
+    await engine.dispose()
+try:
+    asyncio.run(test())
+    print('OK')
+except Exception as e:
+    print(f'FAIL:{e}')
+" 2>&1)
+
+if [ "$DB_TEST" = "OK" ]; then
+    ok "Database connection ${G}verified${NC}"
+else
+    FAIL_MSG=$(echo "$DB_TEST" | sed 's/FAIL://')
+    warn "Database connection failed: ${FAIL_MSG}"
+    dim "  Check DATABASE_URL in logosai-api/.env"
+fi
+
+# Build logos_web for production (AFTER .env.local is fully configured)
+# NEXT_PUBLIC_* vars must be present at build time to be included in the bundle
+echo ""
+info "Building logos_web for production..."
+dim "  (this may take 1-2 minutes)"
+(cd logosai-web && npx next build 2>&1 | tail -3)
+ok "${W}logos_web${NC} production build"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 5: Generate management scripts
@@ -397,36 +872,125 @@ echo ""
 
 mkdir -p "$DIR/logs"
 
+# Check for missing API keys before starting
+_check_env_key() {
+    local key="$1" label="$2" required="$3" file="$DIR/logosai-api/.env"
+    local val=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+    if [ -z "$val" ] || echo "$val" | grep -q "^your-"; then
+        if [ "$required" = "required" ]; then
+            echo -e "  ${Y}▲${NC} ${label} is not set" >/dev/tty
+        fi
+        echo -ne "  ${C}◆${NC} Enter ${label}: " >/dev/tty
+        local input=""
+        read -r input </dev/tty 2>/dev/null || true
+        if [ -n "$input" ]; then
+            if grep -q "^${key}=" "$file" 2>/dev/null; then
+                sed -i.bak "s|^${key}=.*|${key}=${input}|" "$file"
+            else
+                echo "${key}=${input}" >> "$file"
+            fi
+            rm -f "${file}.bak"
+            echo -e "  ${G}●${NC} ${label} saved" >/dev/tty
+        fi
+    fi
+}
+
+# Only check if /dev/tty is available (interactive)
+if [ -e /dev/tty ]; then
+    _google_key=$(grep "^GOOGLE_API_KEY=" "$DIR/logosai-api/.env" 2>/dev/null | cut -d= -f2-)
+    if [ -z "$_google_key" ] || echo "$_google_key" | grep -q "^your-"; then
+        echo -e "  ${DIM}──── Configuration ────${NC}" >/dev/tty
+        _check_env_key "GOOGLE_API_KEY" "Google API Key (Gemini)" "required"
+        echo "" >/dev/tty
+    fi
+fi
+
+kill_port() {
+    local port=$1
+    if command -v fuser &>/dev/null; then
+        fuser -k $port/tcp 2>/dev/null && sleep 1 || true
+    elif command -v lsof &>/dev/null; then
+        local pid=$(lsof -ti :$port 2>/dev/null || true)
+        [ -n "$pid" ] && kill $pid 2>/dev/null && sleep 1 || true
+    else
+        # Fallback: use ss (available on all Linux)
+        local pids=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | sort -u)
+        for pid in $pids; do
+            kill $pid 2>/dev/null || true
+        done
+        [ -n "$pids" ] && sleep 1 || true
+    fi
+}
 for PORT in 8888 8090 8010; do
-    PID=$(lsof -ti :$PORT 2>/dev/null || true)
-    [ -n "$PID" ] && kill $PID 2>/dev/null && sleep 1
+    kill_port $PORT
 done
 
-# ACP server
+# Load API keys from logosai-api/.env for ACP and logos_api processes
+# Ontology reads os.getenv(), not pydantic .env, so we must export these
+_ENV_FILE="$DIR/logosai-api/.env"
+_GK="$(grep '^GOOGLE_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+_OK="$(grep '^OPENAI_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+_TK="$(grep '^TAVILY_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+_AK="$(grep '^ANTHROPIC_API_KEY=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+
+# Verify keys loaded
+[ -n "$_GK" ] && echo -e "  ${DIM}GOOGLE_API_KEY loaded${NC}" || echo -e "  ${R}GOOGLE_API_KEY not found in .env${NC}"
+[ -n "$_TK" ] && echo -e "  ${DIM}TAVILY_API_KEY loaded${NC}" || echo -e "  ${DIM}TAVILY_API_KEY not set (internet search disabled)${NC}"
+
+# ACP server (pass keys explicitly)
 (cd "$DIR/logosai-framework/samples" && \
+    GOOGLE_API_KEY="$_GK" \
+    OPENAI_API_KEY="$_OK" \
+    TAVILY_API_KEY="$_TK" \
+    ANTHROPIC_API_KEY="$_AK" \
     nohup "$DIR/.venv/bin/python" sample_acp_server.py \
     >> "$DIR/logs/acp.log" 2>&1 &)
 echo "$!" > "$DIR/logs/acp.pid"
 sleep 2
 echo -e "  ${G}●${NC} ACP Server     ${B}http://localhost:8888${NC}  ${DIM}PID $(cat "$DIR/logs/acp.pid")${NC}"
 
-# logos_api
-PYTHONPATH="$DIR/logosai-ontology:$DIR/logosai-framework:$PYTHONPATH" \
+# logos_api (cd into dir so .env is found by pydantic-settings)
+# PYTHONPATH=$DIR so 'from ontology.xxx' resolves via symlink ontology -> logosai-ontology
+# Pass API keys as env vars (ontology reads os.getenv, not pydantic .env)
+(cd "$DIR/logosai-api" && \
+    PYTHONPATH="$DIR:$DIR/logosai-framework:$PYTHONPATH" \
+    GOOGLE_API_KEY="$_GK" \
+    OPENAI_API_KEY="$_OK" \
+    TAVILY_API_KEY="$_TK" \
+    ANTHROPIC_API_KEY="$_AK" \
     nohup "$DIR/.venv/bin/python" -m uvicorn app.main:app \
     --host 0.0.0.0 --port 8090 \
-    --app-dir "$DIR/logosai-api" \
-    >> "$DIR/logs/api.log" 2>&1 &
+    >> "$DIR/logs/api.log" 2>&1 &)
 echo "$!" > "$DIR/logs/api.pid"
 sleep 3
 echo -e "  ${G}●${NC} logos_api       ${B}http://localhost:8090${NC}  ${DIM}PID $(cat "$DIR/logs/api.pid")${NC}"
 
-# logos_web
-(cd "$DIR/logosai-web" && \
-    nohup npx next dev -p 8010 \
-    >> "$DIR/logs/web.log" 2>&1 &)
+# logos_web (use production build if available, fallback to dev)
+if [ -d "$DIR/logosai-web/.next" ]; then
+    (cd "$DIR/logosai-web" && \
+        nohup npx next start -p 8010 \
+        >> "$DIR/logs/web.log" 2>&1 &)
+else
+    (cd "$DIR/logosai-web" && \
+        nohup npx next dev -p 8010 \
+        >> "$DIR/logs/web.log" 2>&1 &)
+fi
 echo "$!" > "$DIR/logs/web.pid"
 sleep 5
 echo -e "  ${G}●${NC} logos_web       ${B}http://localhost:8010${NC}  ${DIM}PID $(cat "$DIR/logs/web.pid")${NC}"
+
+# Telegram polling (if token configured)
+_TG_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' "$_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
+if [ -n "$_TG_TOKEN" ] && [ "$_TG_TOKEN" != "your-telegram-bot-token" ]; then
+    (cd "$DIR/logosai-api" && \
+        TELEGRAM_BOT_TOKEN="$_TG_TOKEN" \
+        GOOGLE_API_KEY="$_GK" \
+        nohup "$DIR/.venv/bin/python" scripts/telegram_poll.py \
+        >> "$DIR/logs/telegram.log" 2>&1 &)
+    echo "$!" > "$DIR/logs/telegram.pid"
+    sleep 2
+    echo -e "  ${G}●${NC} Telegram Bot   ${DIM}polling mode${NC}"
+fi
 
 echo ""
 echo -e "  ${DIM}──────────────────────────────────────${NC}"
@@ -436,10 +1000,13 @@ echo -e "  ${W}Logs:${NC}      ${DIM}$DIR/logs/${NC}"
 echo -e "  ${W}Stop:${NC}      ${DIM}./stop.sh${NC}"
 echo ""
 
-if command -v open &>/dev/null; then
-    open "http://localhost:8010" 2>/dev/null || true
-elif command -v xdg-open &>/dev/null; then
-    xdg-open "http://localhost:8010" 2>/dev/null || true
+# Open browser only on local desktop (not SSH/headless servers)
+if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+    if command -v open &>/dev/null; then
+        open "http://localhost:8010" 2>/dev/null || true
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "http://localhost:8010" 2>/dev/null || true
+    fi
 fi
 STARTEOF
 chmod +x "$WORKDIR/start.sh"
@@ -519,6 +1086,284 @@ echo ""
 STATUSEOF
 chmod +x "$WORKDIR/status.sh"
 ok "${W}status.sh${NC} — check service status"
+
+# ── monitor.sh ────────────────────────────
+cat > "$WORKDIR/monitor.sh" << 'MONITOREOF'
+#!/usr/bin/env bash
+#
+# LogosAI — Live Service Monitor
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Colors
+G='\033[0;32m'; R='\033[0;31m'; Y='\033[1;33m'; B='\033[0;34m'
+P='\033[0;35m'; C='\033[0;36m'; W='\033[1;37m'; NC='\033[0m'
+BOLD='\033[1m'; DIM='\033[2m'
+
+# Service definitions
+declare -A SERVICES=(
+    [acp]="ACP Server|8888|logosai-framework/samples"
+    [api]="logos_api|8090|logosai-api"
+    [web]="logos_web|8010|logosai-web"
+)
+SERVICE_ORDER=(acp api web)
+
+# Get terminal dimensions
+update_size() {
+    COLS=$(tput cols 2>/dev/null || echo 80)
+    ROWS=$(tput lines 2>/dev/null || echo 24)
+}
+
+# Get service status
+get_status() {
+    local svc="$1"
+    local pidfile="$DIR/logs/${svc}.pid"
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
+        echo "running"
+    else
+        echo "stopped"
+    fi
+}
+
+# Get uptime
+get_uptime() {
+    local svc="$1"
+    local pidfile="$DIR/logs/${svc}.pid"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            local start_time=$(stat -c %Y "$pidfile" 2>/dev/null || stat -f %m "$pidfile" 2>/dev/null)
+            if [ -n "$start_time" ]; then
+                local now=$(date +%s)
+                local elapsed=$((now - start_time))
+                local h=$((elapsed / 3600))
+                local m=$(((elapsed % 3600) / 60))
+                local s=$((elapsed % 60))
+                if [ "$h" -gt 0 ]; then
+                    echo "${h}h ${m}m"
+                elif [ "$m" -gt 0 ]; then
+                    echo "${m}m ${s}s"
+                else
+                    echo "${s}s"
+                fi
+                return
+            fi
+        fi
+    fi
+    echo "-"
+}
+
+# HTTP health check
+check_http() {
+    local port="$1"
+    local code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://localhost:${port}" 2>/dev/null || echo "000")
+    echo "$code"
+}
+
+# Draw header
+draw_header() {
+    clear
+    echo -e "${P}"
+    echo "  ╔══════════════════════════════════════════════════════════╗"
+    echo -e "  ║${NC}  ${BOLD}LogosAI${NC}  ${DIM}Live Service Monitor${NC}           ${DIM}$(date '+%H:%M:%S')${NC}  ${P}║${NC}"
+    echo -e "${P}  ╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+# Draw service status panel
+draw_services() {
+    echo -e "  ${DIM}─── Services ───────────────────────────────────────────${NC}"
+    echo ""
+
+    for svc in "${SERVICE_ORDER[@]}"; do
+        IFS='|' read -r name port path <<< "${SERVICES[$svc]}"
+        local status=$(get_status "$svc")
+        local uptime=$(get_uptime "$svc")
+        local pid=$(cat "$DIR/logs/${svc}.pid" 2>/dev/null || echo "-")
+        local http=$(check_http "$port")
+
+        local status_icon=""
+        local status_color=""
+        if [ "$status" = "running" ]; then
+            status_icon="●"
+            status_color="$G"
+            if [ "$http" = "000" ]; then
+                status_icon="◐"
+                status_color="$Y"
+            fi
+        else
+            status_icon="■"
+            status_color="$R"
+            uptime="-"
+            pid="-"
+        fi
+
+        printf "  ${status_color}${status_icon}${NC}  %-14s ${B}:%s${NC}   ${DIM}PID %-8s  Up %-10s  HTTP %s${NC}\n" \
+            "$name" "$port" "$pid" "$uptime" "$http"
+    done
+
+    echo ""
+}
+
+# Draw recent logs
+draw_logs() {
+    local log_lines=$((ROWS - 14))
+    [ "$log_lines" -lt 5 ] && log_lines=5
+
+    echo -e "  ${DIM}─── Recent Logs ────────────────────────────────────────${NC}"
+    echo ""
+
+    # Merge and sort recent log lines with labels
+    (
+        [ -f "$DIR/logs/acp.log" ] && tail -20 "$DIR/logs/acp.log" 2>/dev/null | while read -r line; do echo -e "  ${G}ACP${NC} │ $line"; done
+        [ -f "$DIR/logs/api.log" ] && tail -20 "$DIR/logs/api.log" 2>/dev/null | while read -r line; do echo -e "  ${B}API${NC} │ $line"; done
+        [ -f "$DIR/logs/web.log" ] && tail -20 "$DIR/logs/web.log" 2>/dev/null | while read -r line; do echo -e "  ${C}WEB${NC} │ $line"; done
+    ) | tail -${log_lines}
+
+    echo ""
+    echo -e "  ${DIM}Press ${W}q${NC}${DIM} to quit  │  ${W}r${NC}${DIM} to refresh  │  ${W}1${NC}${DIM}/${W}2${NC}${DIM}/${W}3${NC}${DIM} for ACP/API/Web logs  │  Auto-refresh: 5s${NC}"
+}
+
+# Draw single service log
+draw_single_log() {
+    local svc="$1"
+    IFS='|' read -r name port path <<< "${SERVICES[$svc]}"
+    local log_lines=$((ROWS - 8))
+    [ "$log_lines" -lt 5 ] && log_lines=5
+
+    echo -e "  ${DIM}─── ${W}${name}${NC}${DIM} Logs (port ${port}) ─────────────────────────────${NC}"
+    echo ""
+
+    if [ -f "$DIR/logs/${svc}.log" ]; then
+        tail -${log_lines} "$DIR/logs/${svc}.log" 2>/dev/null | while read -r line; do
+            echo "  $line"
+        done
+    else
+        echo -e "  ${DIM}No log file found${NC}"
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Press ${W}0${NC}${DIM} for overview  │  ${W}q${NC}${DIM} to quit  │  ${W}r${NC}${DIM} to refresh  │  Auto-refresh: 3s${NC}"
+}
+
+# Main loop
+VIEW="overview"  # overview, acp, api, web
+REFRESH=5
+
+trap 'tput cnorm 2>/dev/null; exit 0' INT TERM
+tput civis 2>/dev/null  # Hide cursor
+
+while true; do
+    update_size
+    draw_header
+
+    case "$VIEW" in
+        overview)
+            REFRESH=5
+            draw_services
+            draw_logs
+            ;;
+        acp|api|web)
+            REFRESH=3
+            draw_services
+            draw_single_log "$VIEW"
+            ;;
+    esac
+
+    # Wait for input or timeout
+    if read -t $REFRESH -n 1 key 2>/dev/null; then
+        case "$key" in
+            q|Q) tput cnorm 2>/dev/null; echo ""; exit 0 ;;
+            r|R) continue ;;
+            0)   VIEW="overview" ;;
+            1)   VIEW="acp" ;;
+            2)   VIEW="api" ;;
+            3)   VIEW="web" ;;
+        esac
+    fi
+done
+MONITOREOF
+chmod +x "$WORKDIR/monitor.sh"
+ok "${W}monitor.sh${NC} — live service monitor"
+
+# ── update.sh ─────────────────────────────
+cat > "$WORKDIR/update.sh" << 'UPDATEEOF'
+#!/usr/bin/env bash
+#
+# LogosAI — Update all components
+#
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+G='\033[0;32m'; R='\033[0;31m'; B='\033[0;34m'; P='\033[0;35m'; C='\033[0;36m'
+W='\033[1;37m'; NC='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
+
+echo ""
+echo -e "${P}  ╔══════════════════════════════════════╗${NC}"
+echo -e "${P}  ║${NC}  ${BOLD}LogosAI${NC} — Updating                   ${P}║${NC}"
+echo -e "${P}  ╚══════════════════════════════════════╝${NC}"
+echo ""
+
+# Stop services first
+if [ -f "$DIR/stop.sh" ]; then
+    echo -e "  ${DIM}Stopping services...${NC}"
+    bash "$DIR/stop.sh" 2>/dev/null
+fi
+
+# Pull latest code for all repos
+REPOS="logosai-framework logosai-ontology logosai-api logosai-web"
+for repo in $REPOS; do
+    if [ -d "$DIR/$repo" ]; then
+        echo -ne "  ${DIM}Updating $repo...${NC}\r"
+        (cd "$DIR/$repo" && git pull --ff-only -q 2>/dev/null) \
+            && echo -e "  ${G}●${NC} ${W}$repo${NC} updated" \
+            || echo -e "  ${R}●${NC} ${W}$repo${NC} update failed (local changes?)"
+    fi
+done
+
+echo ""
+
+# Update Python dependencies
+if [ -d "$DIR/.venv" ]; then
+    source "$DIR/.venv/bin/activate"
+    echo -ne "  ${DIM}Updating Python packages...${NC}\r"
+    pip install -e "$DIR/logosai-framework/" -q 2>&1 | grep -iE "error" | head -3
+    pip install -e "$DIR/logosai-api/" -q 2>&1 | grep -iE "error" | head -3
+    if [ -f "$DIR/logosai-ontology/requirements.txt" ]; then
+        pip install -r "$DIR/logosai-ontology/requirements.txt" -q 2>&1 | grep -iE "error" | head -3
+    fi
+    echo -e "  ${G}●${NC} Python packages updated"
+fi
+
+# Update Node dependencies
+if [ -d "$DIR/logosai-web/node_modules" ]; then
+    echo -ne "  ${DIM}Updating Node packages...${NC}\r"
+    (cd "$DIR/logosai-web" && npm install --loglevel=error 2>&1 | grep -iE "error|ERR" | head -3)
+    echo -e "  ${G}●${NC} Node packages updated"
+fi
+
+# Run migrations
+echo -ne "  ${DIM}Running migrations...${NC}\r"
+(cd "$DIR/logosai-api" && "$DIR/.venv/bin/python" -m alembic upgrade head 2>/dev/null) \
+    && echo -e "  ${G}●${NC} Database migrations complete" \
+    || echo -e "  ${R}●${NC} Migration failed — check logs"
+
+# Regenerate management scripts (start.sh, stop.sh, etc.)
+echo ""
+echo -ne "  ${DIM}Regenerating scripts...${NC}\r"
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh \
+    | LOGOSAI_DIR="$DIR" bash -s -- --scripts-only 2>/dev/null \
+    || echo -e "  ${DIM}Scripts regeneration skipped (run install.sh to update)${NC}"
+
+echo ""
+echo -e "${G}  ╔══════════════════════════════════════╗${NC}"
+echo -e "${G}  ║${NC}  ${BOLD}Update complete!${NC}                     ${G}║${NC}"
+echo -e "${G}  ╚══════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  ${W}Start:${NC}  ./start.sh"
+echo ""
+UPDATEEOF
+chmod +x "$WORKDIR/update.sh"
+ok "${W}update.sh${NC} — update all components"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Complete
