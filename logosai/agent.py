@@ -85,6 +85,10 @@ class LogosAIAgent:
 
         # Inter-agent collaboration service (injected by ACP server at runtime)
         self._collaboration_service: Optional[CollaborationService] = None
+
+        # Agent registry for direct agent-to-agent calls (injected by ACP server)
+        # Usage: result = await self.call_agent("internet_agent", "search query")
+        self._agent_registry: Optional[Dict[str, 'LogosAIAgent']] = None
     
     def _should_enable_agentic(self) -> bool:
         """Determine whether to enable Agentic AI features"""
@@ -369,6 +373,71 @@ class LogosAIAgent:
     def can_collaborate(self) -> bool:
         """Whether collaboration is possible"""
         return self._collaboration_service is not None
+
+    # ═══════════════════════════════════════════
+    # Agent-to-Agent Communication (ACP built-in)
+    # ═══════════════════════════════════════════
+
+    async def call_agent(
+        self,
+        agent_id: str,
+        query: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Call another agent by ID. Built into the framework — no imports needed.
+
+        Usage:
+            result = await self.call_agent("internet_agent", "오늘 서울 날씨")
+            if result["success"]:
+                answer = result["answer"]
+
+        Args:
+            agent_id: Target agent ID (e.g., 'internet_agent', 'calculator_agent')
+            query: Query string to send
+            context: Optional context dict
+
+        Returns:
+            {"success": bool, "answer": str, "agent_id": str}
+        """
+        if self._agent_registry is None:
+            self.logger.warning(f"call_agent: no registry available (not running in ACP context)")
+            return {"success": False, "answer": "에이전트 간 통신이 설정되지 않았습니다. ACP 서버에서 실행해주세요."}
+
+        target = self._agent_registry.get(agent_id)
+        if target is None:
+            available = list(self._agent_registry.keys())
+            self.logger.warning(f"call_agent: '{agent_id}' not found. Available: {available}")
+            return {"success": False, "answer": f"에이전트 '{agent_id}'를 찾을 수 없습니다."}
+
+        try:
+            caller_id = getattr(self, 'id', self.__class__.__name__)
+            self.logger.info(f"call_agent: {caller_id} → {agent_id}: {query[:50]}")
+
+            result = await target.process(query, context or {})
+
+            # Normalize response
+            if hasattr(result, 'content'):
+                answer = result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
+                return {"success": True, "answer": answer, "agent_id": agent_id}
+            elif isinstance(result, dict):
+                return {"success": True, "agent_id": agent_id, **result}
+            else:
+                return {"success": True, "answer": str(result), "agent_id": agent_id}
+
+        except Exception as e:
+            self.logger.error(f"call_agent to {agent_id} failed: {e}")
+            return {"success": False, "answer": f"에이전트 호출 실패: {e}", "agent_id": agent_id}
+
+    def available_agents(self) -> List[str]:
+        """List available agent IDs that can be called via call_agent().
+
+        Usage:
+            agents = self.available_agents()
+            # ['internet_agent', 'calculator_agent', 'llm_search_agent', ...]
+        """
+        if self._agent_registry is None:
+            return []
+        return list(self._agent_registry.keys())
 
     async def invoke_agent(
         self,
