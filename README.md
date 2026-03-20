@@ -411,20 +411,6 @@ Includes PostgreSQL — no local database needed.
 
 Open http://localhost:8010 to start chatting.
 
-### Screenshots
-
-**Chat Interface** — Multi-agent chat with streaming indicators
-
-![Chat Interface](docs/screenshots/chat.png)
-
-**Auto Reports** — Schedule search & delivery (KakaoTalk/Gmail/Telegram)
-
-![Auto Reports](docs/screenshots/auto-reports.png)
-
-**Monitoring** — Live service status and log viewer
-
-![Monitoring](docs/screenshots/monitoring.png)
-
 ## Related Repositories
 
 | Repository | Description | URL |
