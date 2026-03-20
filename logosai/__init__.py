@@ -236,11 +236,12 @@ except ImportError as e:
 try:
     from .debate import (
         SimpleDebateSystem,
+        LLMDebateSystem,
         DebateResult,
         VotingSystem,
         Vote,
     )
-    __all__ += ["SimpleDebateSystem", "DebateResult", "VotingSystem", "Vote"]
+    __all__ += ["SimpleDebateSystem", "LLMDebateSystem", "DebateResult", "VotingSystem", "Vote"]
 except ImportError as e:
     _logger.debug("Debate system not available: %s", e)
 
