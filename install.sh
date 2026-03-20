@@ -394,51 +394,36 @@ ok "${W}logos_web${NC} dependencies"
 # NOTE: logos_web production build is done AFTER .env.local is configured (Step 4)
 # so that NEXT_PUBLIC_* env vars are included in the build
 
-# ── Desktop Agent dependencies (optional) ──
+# ── Desktop Agent dependencies ──
 echo ""
-echo -e "  ${P}◆${NC} ${BOLD}Desktop Agent Setup${NC} ${DIM}(optional — enables KakaoTalk, Gmail, desktop automation)${NC}"
-echo ""
-echo -e "  The Desktop Agent can control your computer: send KakaoTalk messages,"
-echo -e "  read/send Gmail, take screenshots, automate apps, and more."
-echo ""
-read -p "  Install Desktop Agent dependencies? (Y/n): " INSTALL_DESKTOP
-INSTALL_DESKTOP="${INSTALL_DESKTOP:-Y}"
+echo -e "  ${P}◆${NC} ${BOLD}Desktop Agent${NC} ${DIM}(KakaoTalk, Gmail, desktop automation)${NC}"
 
-if [[ "$INSTALL_DESKTOP" =~ ^[Yy]$ ]]; then
-    # Python packages (cross-platform)
-    pip install pyautogui Pillow -q 2>&1 | grep -iE "error" | head -3
-    ok "pyautogui + Pillow"
+pip install pyautogui Pillow -q 2>&1 | grep -iE "error" | head -3
+ok "pyautogui + Pillow"
 
-    if [ "$OS_TYPE" = "linux" ]; then
-        echo -e "  ${Y}▲${NC} Linux detected — installing system packages (requires sudo)"
-        echo -e "  ${DIM}Packages: xdotool xclip scrot python3-tk python3-dev${NC}"
-        echo ""
-        sudo apt-get update -qq
-        sudo apt-get install -y xdotool xclip scrot python3-tk python3-dev 2>&1 | tail -3
-        ok "Linux desktop tools installed (xdotool, xclip, scrot)"
+if [ "$OS_TYPE" = "linux" ]; then
+    echo -e "  ${DIM}Installing system packages: xdotool xclip scrot python3-tk python3-dev${NC}"
+    sudo apt-get update -qq
+    sudo apt-get install -y xdotool xclip scrot python3-tk python3-dev 2>&1 | tail -3
+    ok "Linux desktop tools (xdotool, xclip, scrot)"
 
-    elif [ "$OS_TYPE" = "macos" ]; then
-        # Peekaboo for macOS desktop automation
-        if command -v brew &>/dev/null; then
-            if ! command -v peekaboo &>/dev/null; then
-                brew install steipete/tap/peekaboo 2>&1 | tail -3
-                ok "Peekaboo installed (macOS desktop automation)"
-            else
-                ok "Peekaboo already installed"
-            fi
+elif [ "$OS_TYPE" = "macos" ]; then
+    if command -v brew &>/dev/null; then
+        if ! command -v peekaboo &>/dev/null; then
+            brew install steipete/tap/peekaboo 2>&1 | tail -3
+            ok "Peekaboo (macOS desktop automation)"
         else
-            warn "Homebrew not found — skip Peekaboo install"
-            dim "    Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-            dim "    Then: brew install steipete/tap/peekaboo"
+            ok "Peekaboo already installed"
         fi
-
-        echo -e "  ${DIM}macOS: Grant Accessibility permission to Terminal/iTerm in${NC}"
-        echo -e "  ${DIM}System Preferences → Privacy & Security → Accessibility${NC}"
+    else
+        warn "Homebrew not found — Peekaboo requires Homebrew"
+        dim "    Install: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+        dim "    Then run install.sh again"
     fi
-    ok "Desktop Agent ready"
-else
-    dim "  Skipped Desktop Agent setup"
+    dim "  macOS: Grant Accessibility permission to Terminal in"
+    dim "  System Preferences → Privacy & Security → Accessibility"
 fi
+ok "Desktop Agent ready"
 
 echo ""
 info "All dependencies installed"
