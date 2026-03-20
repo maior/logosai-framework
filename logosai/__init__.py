@@ -7,7 +7,7 @@ A Python framework for building, orchestrating, and evolving AI agents.
 import logging as _logging
 import os as _os
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __author__ = "LogosAI Team"
 __license__ = "MIT"
 __description__ = "Conversational Agent Development Platform"
