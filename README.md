@@ -319,7 +319,10 @@ Schedule periodic searches delivered via KakaoTalk, Gmail, or Telegram:
 
 - Create, edit, delete, run reports visually
 - KakaoTalk / Gmail / Telegram delivery channels
-- Execution history tracking
+- **Conditional execution**: "Only send if Bitcoin > $80,000" — LLM evaluates conditions
+- **AI summary**: Long results auto-summarized to 3-5 bullet points before delivery
+- **Multi-recipient**: Send to multiple people across different channels simultaneously
+- Execution history tracking with success/failure status
 - Flexible scheduling (daily, weekdays, custom days)
 
 ### Agentic AI Modules
@@ -348,9 +351,10 @@ Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `si
 
 | Guide | Description |
 |-------|-------------|
+| [ACP Protocol](docs/ACP_PROTOCOL.md) | Agent Communication Protocol — endpoints, call_agent(), Auto Reports API |
 | [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | Complete guide — LLM integration, collaboration, debate, evolution |
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |
-| [Samples](samples/) | Runnable examples for every feature |
+| [Samples](samples/) | Runnable examples — includes `ResearchAgent` (call_agent() demo) |
 
 ## Requirements
 
