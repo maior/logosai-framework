@@ -1,5 +1,5 @@
 """
-LogosAI Sample ACP Server — 6 agents on port 8888.
+LogosAI Sample ACP Server — 8 agents on port 8888.
 
 Agents:
   - LLM Search Agent    — General conversation (Gemini/OpenAI)
@@ -8,6 +8,13 @@ Agents:
   - Code Agent           — Code generation and explanation
   - Summarization Agent  — Text summarization
   - Writing Agent        — Email, report, letter writing
+  - Internet Search      — Web search via Tavily
+  - Research Agent       — Calls other agents (search → summarize) via call_agent()
+
+Agent-to-Agent Communication:
+  Any agent can call another agent using self.call_agent():
+    result = await self.call_agent("internet_search_agent", "AI news")
+    agents = self.available_agents()  # list all available agent IDs
 
 Requirements:
     pip install logosai
@@ -443,6 +450,49 @@ class InternetSearchAgent(LogosAIAgent):
 
 
 # ═══════════════════════════════════════════
+# Example: Agent that calls other agents (call_agent demo)
+# ═══════════════════════════════════════════
+class ResearchAgent(LogosAIAgent):
+    """Research agent — searches the web, then summarizes the results.
+
+    Demonstrates self.call_agent() for agent-to-agent communication.
+    No imports needed — call_agent is built into LogosAIAgent.
+    """
+
+    def __init__(self):
+        super().__init__(AgentConfig(
+            name="Research Agent",
+            agent_type=AgentType.CUSTOM,
+            description="Search the web and provide a summarized research report",
+        ))
+
+    async def process(self, query, context=None):
+        # Step 1: Call internet agent to search
+        search_result = await self.call_agent("internet_search_agent", query)
+
+        if not search_result.get("success"):
+            # Fallback to LLM
+            search_result = await self.call_agent("llm_chat_agent", query)
+
+        raw_answer = search_result.get("answer", "No results found")
+
+        # Step 2: Call LLM to summarize (if answer is long)
+        if len(raw_answer) > 300:
+            summary_result = await self.call_agent(
+                "summarization_agent",
+                f"Summarize this in 3 bullet points:\n{raw_answer[:1500]}"
+            )
+            if summary_result.get("success"):
+                raw_answer = summary_result["answer"]
+
+        return AgentResponse(
+            type=AgentResponseType.SUCCESS,
+            content={"answer": f"📊 Research Report:\n\n{raw_answer}"},
+            message="Research complete",
+        )
+
+
+# ═══════════════════════════════════════════
 # Agent Registry
 # ═══════════════════════════════════════════
 AGENTS = {}
@@ -457,6 +507,7 @@ async def _load_agents():
         SummarizationAgent(),
         WritingAgent(),
         InternetSearchAgent(),
+        ResearchAgent(),  # Uses call_agent() to chain search + summarize
     ]
 
     loaded = []
@@ -471,8 +522,13 @@ async def _load_agents():
         AGENTS[agent_id] = a
         loaded.append(agent_id)
 
+    # Inject agent registry for call_agent() (framework built-in)
+    for a in AGENTS.values():
+        a._agent_registry = AGENTS
+
     llm_status = "with LLM" if LLM_AVAILABLE and create_llm_client() else "without LLM (set GOOGLE_API_KEY)"
     print(f"Loaded {len(AGENTS)} agents ({llm_status}): {loaded}")
+    print(f"  Agent-to-agent calls enabled: self.call_agent('agent_id', 'query')")
     if skipped:
         print(f"  Skipped (missing API key): {skipped}")
 
