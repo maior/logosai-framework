@@ -18,9 +18,13 @@ pip install logosai
 |---|---------|-----------|--------|
 | **Agent creation** | 4 lines (`@agent` decorator) | 30+ lines | 15+ lines |
 | **Built-in server** | `SimpleACPServer` — add agents & run | Manual setup | Manual setup |
+| **Agent-to-agent calls** | `self.call_agent()` — built-in | Manual wiring | Manual wiring |
+| **Desktop control** | KakaoTalk, Gmail, automation | — | — |
+| **Auto reports** | Scheduled search → KakaoTalk/Gmail/Telegram | — | — |
 | **Agent debate** | Agents negotiate workflows via voting | — | — |
 | **Self-evolution** | Agents auto-fix errors & learn | — | — |
 | **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric |
+| **Cross-platform** | macOS + Ubuntu | — | — |
 | **Streaming** | SSE + WebSocket built-in | Custom | Custom |
 
 ## Quick Start
@@ -241,6 +245,83 @@ result = await evolution.evolve(
 
 **Safety**: Circuit Breaker (3 failures → 1h cooldown) · Confidence Gates (4-tier validation) · Fix History (cycle prevention)
 
+### Agent-to-Agent Communication
+
+Any agent can call another agent — built into the framework, no imports needed:
+
+```python
+class ResearchAgent(LogosAIAgent):
+    async def process(self, query, context=None):
+        # Search the web
+        result = await self.call_agent("internet_agent", query)
+
+        # Summarize the results
+        if len(result["answer"]) > 300:
+            summary = await self.call_agent("summarization_agent", result["answer"])
+            return summary["answer"]
+
+        return result["answer"]
+
+# See all available agents
+agents = self.available_agents()
+# ['internet_agent', 'calculator_agent', 'llm_search_agent', ...]
+```
+
+**How it works**: The ACP server automatically injects `_agent_registry` into every agent at registration. No configuration needed — `call_agent()` is available immediately.
+
+### Desktop Agent
+
+Control your computer through natural language — send KakaoTalk messages, read/write Gmail, automate any app:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Telegram / Chat UI                                  │
+│  "Search Bitcoin price and send to 이성정 via KakaoTalk" │
+│         ↓                                            │
+│  desktop_agent (router)                              │
+│  ├── kakaotalk_agent  → AppleScript + Peekaboo       │
+│  ├── mail_agent       → Chrome JS (cross-platform)   │
+│  ├── auto_report_agent → Scheduled search + delivery │
+│  └── app_launcher     → General desktop automation   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Capabilities**:
+
+| Feature | macOS | Ubuntu |
+|---------|-------|--------|
+| KakaoTalk messaging | ✅ AppleScript Accessibility | ❌ No app |
+| Gmail read/compose/reply/send | ✅ | ✅ Chrome CDP |
+| Screenshot | ✅ screencapture | ✅ scrot |
+| App launch/control | ✅ | ✅ xdotool |
+| Auto Reports (scheduled) | ✅ | ✅ |
+| Telegram delivery | ✅ | ✅ |
+
+**Requirements**:
+- macOS: `brew install steipete/tap/peekaboo` + Accessibility permission
+- Ubuntu: `sudo apt install xdotool xclip scrot`
+- Both: `pip install pyautogui Pillow`
+
+> All dependencies are installed automatically by `install.sh`.
+
+### Auto Reports
+
+Schedule periodic searches delivered via KakaoTalk, Gmail, or Telegram:
+
+```
+"매일 아침 8시에 서울 날씨 검색해서 카카오톡으로 보내줘"
+"매일 저녁 6시에 비트코인 시세 이메일로 보내줘"
+"자동 리포트 목록 보여줘"
+"1번 자동 리포트 지금 실행해줘"
+```
+
+**Web management UI**: `http://localhost:8010/auto-reports`
+
+- Create, edit, delete, run reports
+- KakaoTalk / Gmail / Telegram delivery channels
+- Execution history tracking
+- Flexible scheduling (daily, weekdays, custom days)
+
 ### Agentic AI Modules
 
 | Module | Purpose |
@@ -273,9 +354,15 @@ Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `si
 
 ## Requirements
 
-**Core** (installed automatically): Python 3.8+, aiohttp, pydantic, loguru
+**Core** (installed automatically): Python 3.11+, aiohttp, pydantic, loguru
 
-**Optional** (`pip install logosai[llm]`): openai, anthropic, google-generativeai, langchain
+**LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai, langchain
+
+**Desktop Agent** (installed by `install.sh`):
+- macOS: Peekaboo (`brew install steipete/tap/peekaboo`), pyautogui
+- Ubuntu: xdotool, xclip, scrot, pyautogui
+
+**Full Stack**: Node.js 18+, PostgreSQL 14+
 
 ## License
 
@@ -291,62 +378,17 @@ Want the complete LogosAI platform (frontend + backend + agents)? Two options:
 curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
 ```
 
-#### What the installer does
-
-The script runs 5 steps automatically:
-
-| Step | What happens |
-|------|-------------|
-| **1. Prerequisites check** | Detects OS (Ubuntu/macOS), verifies Python 3.11+, Node.js 18+, npm, Git, PostgreSQL 14+ (or Docker). Shows OS-specific install commands if anything is missing. Also checks for `python3-venv` and `pip` on Ubuntu. |
-| **2. Clone repositories** | Clones all 4 repos into `~/logosai/` (or `$LOGOSAI_DIR` if set). If repos already exist, pulls the latest changes instead. |
-| **3. Install dependencies** | Creates a Python virtual environment (`.venv/`), installs logosai framework, ontology dependencies, logos_api dependencies, and runs `npm install` for logos_web. |
-| **4. Database setup** | If PostgreSQL is not installed but Docker is available, automatically starts a PostgreSQL 15 container. Creates the `logosai` database, copies `.env.example` files, and runs Alembic migrations. Safe to re-run — won't drop existing data. |
-| **5. Generate scripts** | Creates `start.sh`, `stop.sh`, and `status.sh` in the workspace directory. |
-
-#### Prerequisites
-
-| Tool | Minimum Version | Ubuntu | macOS |
-|------|----------------|--------|-------|
-| Python | 3.11+ | `sudo apt install python3.11 python3.11-venv python3-pip` | `brew install python@3.11` |
-| Node.js | 18+ | `curl -fsSL https://deb.nodesource.com/setup_18.x \| sudo -E bash - && sudo apt install nodejs` | `brew install node@18` |
-| Git | any | `sudo apt install git` | `xcode-select --install` |
-| PostgreSQL | 14+ | `sudo apt install postgresql && sudo systemctl start postgresql` | `brew install postgresql@15 && brew services start postgresql@15` |
-
-> **No PostgreSQL?** If Docker is installed, the installer automatically runs PostgreSQL in a container. No manual setup needed.
-
-#### After installation
+This creates `~/logosai/`, clones all 4 repos, installs dependencies, and sets up the database.
+Then start everything:
 
 ```bash
 cd ~/logosai
-./start.sh       # Start all services (ACP + API + frontend)
+./start.sh       # Start all services
 ./stop.sh        # Stop all services
 ./status.sh      # Check what's running
 ```
 
-#### Workspace structure
-
-```
-~/logosai/
-├── logosai-framework/    # Python SDK + Agent Runtime
-├── logosai-ontology/     # Orchestration Engine
-├── logosai-api/          # FastAPI Backend
-├── logosai-web/          # Next.js Frontend
-├── .venv/                # Python virtual environment
-├── logs/                 # Service logs + PID files
-├── start.sh              # Start all services
-├── stop.sh               # Stop all services
-└── status.sh             # Check service status
-```
-
-#### Custom install directory
-
-```bash
-LOGOSAI_DIR=~/my-project curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
-```
-
-#### Re-running the installer
-
-Safe to run multiple times. It will pull the latest code, skip existing databases, and regenerate management scripts. No data will be lost.
+Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+ (or Docker).
 
 ### Option B: Docker Compose
 
@@ -356,18 +398,29 @@ cd logosai-framework
 docker compose up
 ```
 
-Includes PostgreSQL — no local database, Python, or Node.js needed. Just Docker.
+Includes PostgreSQL — no local database needed.
 
 ### Services
 
 | Service | Port | What it does |
 |---------|------|-------------|
-| logos_web | 8010 | Next.js frontend — chat UI |
-| logos_api | 8090 | FastAPI backend — auth, streaming, memory |
-| ACP Server | 8888 | Agent runtime — executes agents |
-| PostgreSQL | 5432 | Database (auto-provisioned) |
+| logos_web | 8010 | Next.js frontend — chat UI, auto reports management |
+| logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
+| ACP Server | 8888 | Agent runtime — 50+ agents with inter-agent communication |
+| PostgreSQL | 5432 | Database |
 
 Open http://localhost:8010 to start chatting.
+
+### Screenshots
+
+| Feature | Description |
+|---------|-------------|
+| **Chat Interface** | Multi-agent chat with streaming indicators |
+| **Auto Reports** | Schedule search & delivery (KakaoTalk/Gmail/Telegram) |
+| **Monitoring** | Live service status and log viewer |
+| **Agent Communication** | `self.call_agent()` chains multiple agents |
+
+> Screenshots coming soon — see `docs/` for detailed documentation.
 
 ## Related Repositories
 
