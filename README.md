@@ -276,7 +276,7 @@ Control your computer through natural language — send KakaoTalk messages, read
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Telegram / Chat UI                                  │
-│  "Search Bitcoin price and send to 이성정 via KakaoTalk" │
+│  "Search Bitcoin price and send to John via KakaoTalk"   │
 │         ↓                                            │
 │  desktop_agent (router)                              │
 │  ├── kakaotalk_agent  → AppleScript + Peekaboo       │
@@ -309,15 +309,15 @@ Control your computer through natural language — send KakaoTalk messages, read
 Schedule periodic searches delivered via KakaoTalk, Gmail, or Telegram:
 
 ```
-"매일 아침 8시에 서울 날씨 검색해서 카카오톡으로 보내줘"
-"매일 저녁 6시에 비트코인 시세 이메일로 보내줘"
-"자동 리포트 목록 보여줘"
-"1번 자동 리포트 지금 실행해줘"
+"Every morning at 8am, search Seoul weather and send via KakaoTalk"
+"Every evening at 6pm, send Bitcoin price report via email"
+"Show auto report list"
+"Run report #1 now"
 ```
 
 **Web management UI**: `http://localhost:8010/auto-reports`
 
-- Create, edit, delete, run reports
+- Create, edit, delete, run reports visually
 - KakaoTalk / Gmail / Telegram delivery channels
 - Execution history tracking
 - Flexible scheduling (daily, weekdays, custom days)
