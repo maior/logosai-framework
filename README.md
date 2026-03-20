@@ -413,14 +413,17 @@ Open http://localhost:8010 to start chatting.
 
 ### Screenshots
 
-| Feature | Description |
-|---------|-------------|
-| **Chat Interface** | Multi-agent chat with streaming indicators |
-| **Auto Reports** | Schedule search & delivery (KakaoTalk/Gmail/Telegram) |
-| **Monitoring** | Live service status and log viewer |
-| **Agent Communication** | `self.call_agent()` chains multiple agents |
+**Chat Interface** — Multi-agent chat with streaming indicators
 
-> Screenshots coming soon — see `docs/` for detailed documentation.
+![Chat Interface](docs/screenshots/chat.png)
+
+**Auto Reports** — Schedule search & delivery (KakaoTalk/Gmail/Telegram)
+
+![Auto Reports](docs/screenshots/auto-reports.png)
+
+**Monitoring** — Live service status and log viewer
+
+![Monitoring](docs/screenshots/monitoring.png)
 
 ## Related Repositories
 
