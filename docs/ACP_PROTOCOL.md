@@ -188,12 +188,13 @@ for agent in AGENTS.values():
 
 ## Desktop Agent Sub-Agents
 
-The Desktop Agent routes requests to specialized sub-agents:
+The Desktop Agent uses an **LLM router** to determine which sub-agent handles each query — no hardcoded keyword matching.
 
 | Sub-Agent | Capabilities | Platform |
 |-----------|-------------|----------|
+| `mail_agent` | Gmail read/compose/reply/attach/delete | Cross-platform |
 | `kakaotalk_agent` | Send KakaoTalk messages | macOS |
-| `mail_agent` | Gmail read/compose/reply/send | Cross-platform |
+| `notion_agent` | Notion search/read/create/todos/text | Cross-platform |
 | `auto_report_agent` | Scheduled search + delivery | Cross-platform |
 | `app_launcher` | Launch apps, screenshots, automation | Cross-platform |
 
