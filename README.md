@@ -271,31 +271,37 @@ agents = self.available_agents()
 
 ### Desktop Agent
 
-Control your computer through natural language — send KakaoTalk messages, read/write Gmail, automate any app:
+Control your computer through natural language — send KakaoTalk messages, read/write Gmail, manage Notion, automate any app:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Telegram / Chat UI                                  │
-│  "Search Bitcoin price and send to John via KakaoTalk"   │
-│         ↓                                            │
-│  desktop_agent (router)                              │
-│  ├── kakaotalk_agent  → AppleScript + Peekaboo       │
-│  ├── mail_agent       → Chrome JS (cross-platform)   │
-│  ├── auto_report_agent → Scheduled search + delivery │
-│  └── app_launcher     → General desktop automation   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Telegram / Chat UI                                      │
+│  "Check my email" / "Send KakaoTalk" / "Notion todos"   │
+│         ↓                                                │
+│  desktop_agent (LLM router)                              │
+│  ├── mail_agent       → Gmail read/compose/reply/attach  │
+│  ├── kakaotalk_agent  → AppleScript + Peekaboo           │
+│  ├── notion_agent     → Notion search/read/create/todos  │
+│  ├── auto_report_agent → Scheduled search + delivery     │
+│  └── app_launcher     → General desktop automation       │
+└─────────────────────────────────────────────────────────┘
 ```
 
 **Capabilities**:
 
 | Feature | macOS | Ubuntu |
 |---------|-------|--------|
+| Gmail read/compose/reply/attach | ✅ | ✅ Chrome CDP |
+| Gmail file attachment | ✅ Finder copy+paste | — |
 | KakaoTalk messaging | ✅ AppleScript Accessibility | ❌ No app |
-| Gmail read/compose/reply/send | ✅ | ✅ Chrome CDP |
+| Notion read/create/search/todos | ✅ Keyboard + Vision | ✅ |
+| WhatsApp messaging | ✅ URL scheme | ✅ |
 | Screenshot | ✅ screencapture | ✅ scrot |
 | App launch/control | ✅ | ✅ xdotool |
 | Auto Reports (scheduled) | ✅ | ✅ |
 | Telegram delivery | ✅ | ✅ |
+
+**All routing is LLM-based** — no hardcoded keywords. The LLM router determines which sub-agent handles each query.
 
 **Requirements**:
 - macOS: `brew install steipete/tap/peekaboo` + Accessibility permission
