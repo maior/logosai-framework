@@ -12,6 +12,18 @@ LogosAI is a Python framework for building, orchestrating, and evolving AI agent
 pip install logosai
 ```
 
+## Architecture
+
+<p align="center">
+  <img src="docs/architecture-overview.svg" alt="LogosAI System Architecture" width="100%"/>
+</p>
+
+<p align="center">
+  <img src="docs/self-evolution-flow.svg" alt="Self-Evolution Flow" width="100%"/>
+</p>
+
+> **[Interactive version](https://logosai.info/architecture)** — animated data flows, clickable components, live scenario demo.
+
 ## Why LogosAI?
 
 | | LogosAI | LangGraph | CrewAI |
