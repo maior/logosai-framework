@@ -396,8 +396,14 @@ Want the complete LogosAI platform (frontend + backend + agents)? Two options:
 
 ### Option A: One-command install
 
+**macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-macos.sh | bash
+```
+
+**Ubuntu / Debian:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-ubuntu.sh | bash
 ```
 
 This creates `~/logosai/`, clones all 4 repos, installs dependencies, and sets up the database.
