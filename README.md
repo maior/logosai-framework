@@ -257,6 +257,32 @@ result = await evolution.evolve(
 
 **Safety**: Circuit Breaker (3 failures → 1h cooldown) · Confidence Gates (4-tier validation) · Fix History (cycle prevention)
 
+### FORGE Agent Builder (Optional)
+
+Auto-generate, improve, and enhance agents with `logosai-forge`:
+
+```bash
+pip install logosai-forge
+```
+
+```python
+from logosai_forge import ForgeClient
+
+forge = ForgeClient()
+result = await forge.create_agent("Calculate BMI from weight and height")  # New agent
+result = await forge.improve_agent(code, failure_log)                      # Fix bugs
+result = await forge.enhance_agent(code, "add multiply and divide")        # Add features
+```
+
+When integrated with the ACP server, FORGE enables **autonomous agent evolution**:
+
+```
+Agent fails → FailureLogger → 30% failure rate exceeded
+  → FORGE improve_agent() → Confidence Gate (≥0.95)
+  → RollbackManager backup → hot_register deploy
+  → EvolutionMonitor tracks → rollback if degraded
+```
+
 ### Agent-to-Agent Communication
 
 Any agent can call another agent — built into the framework, no imports needed:
@@ -290,12 +316,13 @@ Control your computer through natural language — send KakaoTalk messages, read
 │  Telegram / Chat UI                                      │
 │  "Check my email" / "Send KakaoTalk" / "Notion todos"   │
 │         ↓                                                │
-│  desktop_agent (LLM router)                              │
-│  ├── mail_agent       → Gmail read/compose/reply/attach  │
-│  ├── kakaotalk_agent  → AppleScript + Peekaboo           │
-│  ├── notion_agent     → Notion search/read/create/todos  │
-│  ├── auto_report_agent → Scheduled search + delivery     │
-│  └── app_launcher     → General desktop automation       │
+│  desktop_agent (LLM router + ScreenAnalyzer)              │
+│  ├── mail_agent            → Gmail read/compose/reply    │
+│  ├── kakaotalk_agent       → AppleScript + Peekaboo      │
+│  ├── notion_agent          → Keyboard + Vision           │
+│  ├── multi_ai_inquiry_agent → ChatGPT/Claude/Gemini 비교 │
+│  ├── auto_report_agent     → Scheduled search + delivery │
+│  └── screen_analyzer       → See → Think → Act (공통)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -307,13 +334,17 @@ Control your computer through natural language — send KakaoTalk messages, read
 | Gmail file attachment | ✅ Finder copy+paste | — |
 | KakaoTalk messaging | ✅ AppleScript Accessibility | ❌ No app |
 | Notion read/create/search/todos | ✅ Keyboard + Vision | ✅ |
+| Multi-AI Inquiry (ChatGPT/Claude/Gemini) | ✅ App + Chrome | ✅ Chrome |
 | WhatsApp messaging | ✅ URL scheme | ✅ |
 | Screenshot | ✅ screencapture | ✅ scrot |
 | App launch/control | ✅ | ✅ xdotool |
 | Auto Reports (scheduled) | ✅ | ✅ |
 | Telegram delivery | ✅ | ✅ |
+| ScreenAnalyzer (Vision) | ✅ Gemini Vision | ✅ |
 
 **All routing is LLM-based** — no hardcoded keywords. The LLM router determines which sub-agent handles each query.
+
+**ScreenAnalyzer** — Hybrid "See → Think → Act": takes a screenshot and asks LLM Vision to analyze the screen state *only at decision points* (login check, search result verification, app state detection). Regular actions (typing, clicking) execute directly without Vision.
 
 **Requirements**:
 - macOS: `brew install steipete/tap/peekaboo` + Accessibility permission
