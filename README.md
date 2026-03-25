@@ -307,22 +307,46 @@ agents = self.available_agents()
 
 **How it works**: The ACP server automatically injects `_agent_registry` into every agent at registration. No configuration needed — `call_agent()` is available immediately.
 
+### Agent Collaboration (L3/L4)
+
+Beyond data passing — agents can exchange opinions, share discoveries, and learn from each other:
+
+```python
+# L3: Ask another agent for their opinion (not just data)
+opinion = await self.ask_opinion("analysis_agent", "Is this a seasonal pattern?",
+                                  my_analysis={"pattern": "March spike", "confidence": 0.6})
+if not opinion.agrees:
+    reconsider(opinion.reasoning)  # "Also consider marketing effect"
+
+# L3: Request help with reason
+help = await self.request_help("internet_agent", "Last year's weather data",
+                                reason="Need for seasonal comparison")
+
+# L4: Share what you learned (persisted for other agents)
+await self.share_learning(pattern="Gmail compose overlay breaks JS",
+                           solution="Add &fs=1 to compose URL",
+                           tags=["gmail", "chrome"])
+
+# L4: Learn from others' experiences
+learnings = await self.get_learnings(tags=["gmail"])
+```
+
 ### Desktop Agent
 
-Control your computer through natural language — send KakaoTalk messages, read/write Gmail, manage Notion, automate any app:
+Control your computer through natural language. Each desktop agent is an **independent ACP agent** — callable directly or via desktop_agent's `call_agent()`:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Telegram / Chat UI                                      │
 │  "Check my email" / "Send KakaoTalk" / "Notion todos"   │
 │         ↓                                                │
-│  desktop_agent (LLM router + ScreenAnalyzer)              │
-│  ├── mail_agent            → Gmail read/compose/reply    │
-│  ├── kakaotalk_agent       → AppleScript + Peekaboo      │
-│  ├── notion_agent          → Keyboard + Vision           │
-│  ├── multi_ai_inquiry_agent → ChatGPT/Claude/Gemini 비교 │
-│  ├── auto_report_agent     → Scheduled search + delivery │
-│  └── screen_analyzer       → See → Think → Act (공통)    │
+│  desktop_agent (LLM router)                              │
+│  ├── call_agent("kakaotalk_agent")     → KakaoTalk      │
+│  ├── call_agent("mail_desktop_agent")  → Gmail           │
+│  ├── call_agent("notion_desktop_agent") → Notion         │
+│  ├── call_agent("multi_ai_inquiry_agent") → AI 비교      │
+│  ├── auto_report_agent  → Scheduled delivery             │
+│  └── screen_analyzer    → See → Think → Act (공통)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
