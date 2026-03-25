@@ -211,3 +211,69 @@ class AgentResponse:
             metadata={"success_message": message},
             message=message
         )
+
+
+# ═══════════════════════════════════════════
+# L3: Real-time Collaboration Types
+# ═══════════════════════════════════════════
+
+@dataclass
+class Opinion:
+    """Response from ask_opinion() — another agent's judgment."""
+    agent_id: str
+    agrees: bool
+    confidence: float
+    reasoning: str
+    suggestion: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"agent_id": self.agent_id, "agrees": self.agrees,
+                "confidence": self.confidence, "reasoning": self.reasoning,
+                "suggestion": self.suggestion}
+
+
+@dataclass
+class HelpResult:
+    """Response from request_help() — whether another agent can assist."""
+    agent_id: str
+    available: bool
+    result: Any = None
+    reason: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"agent_id": self.agent_id, "available": self.available,
+                "result": self.result, "reason": self.reason}
+
+
+@dataclass
+class Acknowledgment:
+    """Response from share_finding() — whether the agent received and will act."""
+    agent_id: str
+    received: bool
+    will_act: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"agent_id": self.agent_id, "received": self.received,
+                "will_act": self.will_act}
+
+
+# ═══════════════════════════════════════════
+# L4: Learning Sharing Types
+# ═══════════════════════════════════════════
+
+@dataclass
+class Learning:
+    """A learned pattern that can be shared between agents."""
+    source_agent: str
+    pattern: str
+    solution: str
+    confidence: float
+    tags: List[str] = field(default_factory=list)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    usage_count: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"source_agent": self.source_agent, "pattern": self.pattern,
+                "solution": self.solution, "confidence": self.confidence,
+                "tags": self.tags, "timestamp": self.timestamp,
+                "usage_count": self.usage_count}
