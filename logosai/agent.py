@@ -439,6 +439,269 @@ class LogosAIAgent:
             return []
         return list(self._agent_registry.keys())
 
+    # ═══════════════════════════════════════════
+    # L3: Real-time Collaboration
+    # ═══════════════════════════════════════════
+
+    async def ask_opinion(
+        self,
+        agent_id: str,
+        question: str,
+        my_analysis: Optional[Dict[str, Any]] = None,
+    ):
+        """Ask another agent for their opinion on your analysis.
+
+        Unlike call_agent() which just sends data and gets results,
+        ask_opinion() shares your reasoning and asks for judgment.
+
+        Usage:
+            opinion = await self.ask_opinion(
+                "analysis_agent",
+                "이 데이터에서 3월 급등 패턴이 보이는데 계절적 요인일까?",
+                my_analysis={"pattern": "3월마다 급등", "confidence": 0.6}
+            )
+            if opinion.agrees:
+                proceed_with_analysis()
+            else:
+                reconsider(opinion.reasoning, opinion.suggestion)
+
+        Returns:
+            Opinion(agrees, confidence, reasoning, suggestion)
+        """
+        from .agent_types import Opinion
+
+        if self._agent_registry is None:
+            return Opinion(agent_id=agent_id, agrees=True, confidence=0.0,
+                           reasoning="ACP 미연결 — 의견 교환 불가")
+
+        target = self._agent_registry.get(agent_id)
+        if not target:
+            return Opinion(agent_id=agent_id, agrees=True, confidence=0.0,
+                           reasoning=f"에이전트 '{agent_id}' 없음")
+
+        caller_id = getattr(self, 'id', self.__class__.__name__)
+        self.logger.info(f"ask_opinion: {caller_id} → {agent_id}: {question[:50]}")
+
+        try:
+            # L3 context: opinion request with caller's analysis
+            context = {
+                "_l3_type": "ask_opinion",
+                "_caller_id": caller_id,
+                "_caller_analysis": my_analysis or {},
+                "_question": question,
+            }
+            result = await target.process(question, context)
+
+            # Parse opinion from result
+            if hasattr(result, 'content') and isinstance(result.content, dict):
+                content = result.content
+            elif isinstance(result, dict):
+                content = result
+            else:
+                content = {"answer": str(result)}
+
+            return Opinion(
+                agent_id=agent_id,
+                agrees=content.get("agrees", True),
+                confidence=content.get("confidence", 0.5),
+                reasoning=content.get("reasoning", content.get("answer", "")),
+                suggestion=content.get("suggestion", ""),
+            )
+        except Exception as e:
+            self.logger.warning(f"ask_opinion failed: {e}")
+            return Opinion(agent_id=agent_id, agrees=True, confidence=0.0,
+                           reasoning=f"의견 교환 실패: {e}")
+
+    async def share_finding(
+        self,
+        finding: Dict[str, Any],
+        relevant_agents: Optional[List[str]] = None,
+    ):
+        """Broadcast a finding to relevant agents during work.
+
+        Unlike call_agent(), this is informational — you're not asking for
+        a result, you're sharing something you discovered.
+
+        Usage:
+            await self.share_finding(
+                {"type": "data_anomaly", "detail": "2026-03 매출 데이터 누락"},
+                relevant_agents=["analysis_agent", "report_agent"]
+            )
+
+        Returns:
+            List[Acknowledgment]
+        """
+        from .agent_types import Acknowledgment
+
+        if self._agent_registry is None:
+            return []
+
+        caller_id = getattr(self, 'id', self.__class__.__name__)
+        targets = relevant_agents or list(self._agent_registry.keys())
+        results = []
+
+        for aid in targets:
+            if aid == caller_id:
+                continue
+            target = self._agent_registry.get(aid)
+            if not target:
+                continue
+
+            try:
+                context = {
+                    "_l3_type": "share_finding",
+                    "_caller_id": caller_id,
+                    "_finding": finding,
+                }
+                # Non-blocking: don't wait for full processing
+                if hasattr(target, '_on_finding'):
+                    will_act = await target._on_finding(finding, caller_id)
+                    results.append(Acknowledgment(agent_id=aid, received=True, will_act=will_act))
+                else:
+                    results.append(Acknowledgment(agent_id=aid, received=True, will_act=False))
+            except Exception:
+                results.append(Acknowledgment(agent_id=aid, received=False, will_act=False))
+
+        self.logger.info(f"share_finding: {caller_id} → {len(results)} agents, "
+                         f"will_act: {sum(1 for r in results if r.will_act)}")
+        return results
+
+    async def request_help(
+        self,
+        agent_id: str,
+        task: str,
+        reason: str,
+    ):
+        """Request help from another agent, explaining why you need it.
+
+        Unlike call_agent() which is a command, request_help() is a
+        request — the other agent can decline if it can't help.
+
+        Usage:
+            help = await self.request_help(
+                "internet_agent",
+                task="작년 3월 서울 날씨 데이터",
+                reason="분석 중 계절 패턴 비교 필요, 내가 접근 못하는 데이터"
+            )
+            if help.available:
+                use_data(help.result)
+            else:
+                find_alternative(help.reason)
+
+        Returns:
+            HelpResult(available, result, reason)
+        """
+        from .agent_types import HelpResult
+
+        if self._agent_registry is None:
+            return HelpResult(agent_id=agent_id, available=False,
+                              reason="ACP 미연결")
+
+        target = self._agent_registry.get(agent_id)
+        if not target:
+            return HelpResult(agent_id=agent_id, available=False,
+                              reason=f"에이전트 '{agent_id}' 없음")
+
+        caller_id = getattr(self, 'id', self.__class__.__name__)
+        self.logger.info(f"request_help: {caller_id} → {agent_id}: {task[:50]} (reason: {reason[:50]})")
+
+        try:
+            context = {
+                "_l3_type": "request_help",
+                "_caller_id": caller_id,
+                "_task": task,
+                "_reason": reason,
+            }
+            result = await target.process(task, context)
+
+            if hasattr(result, 'content') and isinstance(result.content, dict):
+                answer = result.content.get("answer", "")
+            elif isinstance(result, dict):
+                answer = result.get("answer", str(result))
+            else:
+                answer = str(result)
+
+            return HelpResult(
+                agent_id=agent_id,
+                available=True,
+                result=answer,
+            )
+        except Exception as e:
+            return HelpResult(agent_id=agent_id, available=False,
+                              reason=f"도움 요청 실패: {e}")
+
+    # ═══════════════════════════════════════════
+    # L4: Learning Sharing
+    # ═══════════════════════════════════════════
+
+    async def share_learning(self, pattern: str, solution: str,
+                             confidence: float = 0.8, tags: List[str] = None):
+        """Share something you learned so other agents can benefit.
+
+        Usage:
+            await self.share_learning(
+                pattern="Gmail compose overlay 모드에서 JS selector 실패",
+                solution="compose URL에 &fs=1 추가하면 전체 화면으로 열림",
+                confidence=0.9,
+                tags=["gmail", "chrome"],
+            )
+        """
+        from .agent_types import Learning
+
+        caller_id = getattr(self, 'id', self.__class__.__name__)
+        learning = Learning(
+            source_agent=caller_id,
+            pattern=pattern,
+            solution=solution,
+            confidence=confidence,
+            tags=tags or [],
+        )
+
+        # Store via ACP's LearningStore if available
+        if hasattr(self, '_acp_server') and self._acp_server:
+            store = getattr(self._acp_server, 'learning_store', None)
+            if store:
+                store.add(learning)
+                self.logger.info(f"share_learning: {caller_id} → {pattern[:50]}")
+                return
+
+        # Fallback: store in instance (not shared, but at least not lost)
+        if not hasattr(self, '_local_learnings'):
+            self._local_learnings = []
+        self._local_learnings.append(learning)
+        self.logger.info(f"share_learning (local): {caller_id} → {pattern[:50]}")
+
+    async def get_learnings(self, tags: List[str] = None,
+                            source_agent: str = None):
+        """Get learnings shared by other agents.
+
+        Usage:
+            learnings = await self.get_learnings(tags=["gmail"])
+            for l in learnings:
+                print(f"{l.source_agent}: {l.pattern} → {l.solution}")
+        """
+        # Try ACP's LearningStore first
+        if hasattr(self, '_acp_server') and self._acp_server:
+            store = getattr(self._acp_server, 'learning_store', None)
+            if store:
+                return store.query(tags=tags, source_agent=source_agent)
+
+        # Fallback: local learnings
+        learnings = getattr(self, '_local_learnings', [])
+        if tags:
+            learnings = [l for l in learnings if any(t in l.tags for t in tags)]
+        if source_agent:
+            learnings = [l for l in learnings if l.source_agent == source_agent]
+        return learnings
+
+    # Optional hook for receiving findings from other agents
+    async def _on_finding(self, finding: Dict[str, Any], from_agent: str) -> bool:
+        """Override to react to findings shared by other agents.
+
+        Returns True if this agent will act on the finding.
+        """
+        return False
+
     async def invoke_agent(
         self,
         capability: str,
