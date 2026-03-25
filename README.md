@@ -489,10 +489,34 @@ Includes PostgreSQL — no local database needed.
 |---------|------|-------------|
 | logos_web | 8010 | Next.js frontend — chat UI, auto reports management |
 | logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
-| ACP Server | 8888 | Agent runtime — 50+ agents with inter-agent communication |
+| ACP Server | 8888 | Agent runtime — 55+ agents with inter-agent communication |
 | PostgreSQL | 5432 | Database |
 
 Open http://localhost:8010 to start chatting.
+
+## Recent Updates (2026-03)
+
+### Self-Evolution System
+- **GapDetector** → detects missing agents → **FORGE** generates new ones → **hot_register** deploys with zero downtime
+- **FailureLogger** → 30% failure rate → auto-improvement → **Confidence Gate** (≥0.95 auto-deploy)
+- **RollbackManager** → version snapshots → auto-rollback if degraded
+- **EvolutionMonitor** → tracks post-deployment health
+- **logosai-forge** (`pip install logosai-forge`) — create/improve/enhance agents as library
+
+### Agent Architecture
+- **55 agents** (was 50) — desktop agents now independent ACP agents
+- **Dynamic routing** — desktop_agent discovers agents via tags, no hardcoded routes
+- **L3 collaboration** — ask_opinion(), share_finding(), request_help()
+- **L4 learning** — share_learning() + LearningStore (persisted JSON, shared across agents)
+
+### Desktop Agent
+- **ScreenAnalyzer** — lightweight check (~0.1s AppleScript) → Vision fallback (~3s) only when needed
+- **Intent Verification** — verify_ready_to_act() before irreversible actions (won't send email if attachment failed)
+- **Multi-AI Inquiry** — query ChatGPT/Claude/Gemini simultaneously, synthesize comparison
+
+### Infrastructure
+- **Architecture page** — interactive visualization at /architecture (logos_web)
+- **OS-specific installers** — install-macos.sh + install-ubuntu.sh (fixes BSD/GNU differences)
 
 ## Related Repositories
 
