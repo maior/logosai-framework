@@ -340,13 +340,13 @@ Control your computer through natural language. Each desktop agent is an **indep
 │  Telegram / Chat UI                                      │
 │  "Check my email" / "Send KakaoTalk" / "Notion todos"   │
 │         ↓                                                │
-│  desktop_agent (LLM router)                              │
+│  desktop_agent (dynamic LLM router — no hardcoded routes) │
 │  ├── call_agent("kakaotalk_agent")     → KakaoTalk      │
 │  ├── call_agent("mail_desktop_agent")  → Gmail           │
 │  ├── call_agent("notion_desktop_agent") → Notion         │
 │  ├── call_agent("multi_ai_inquiry_agent") → AI 비교      │
-│  ├── auto_report_agent  → Scheduled delivery             │
-│  └── screen_analyzer    → See → Think → Act (공통)       │
+│  ├── call_agent("auto_report_agent")   → Scheduled       │
+│  └── screen_analyzer (lightweight + Vision fallback)     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -368,7 +368,7 @@ Control your computer through natural language. Each desktop agent is an **indep
 
 **All routing is LLM-based** — no hardcoded keywords. The LLM router determines which sub-agent handles each query.
 
-**ScreenAnalyzer** — Hybrid "See → Think → Act": takes a screenshot and asks LLM Vision to analyze the screen state *only at decision points* (login check, search result verification, app state detection). Regular actions (typing, clicking) execute directly without Vision.
+**ScreenAnalyzer** — Lightweight check first (~0.1s via AppleScript/JS), Vision fallback only when needed (~3s). Intent Verification: verifies all preconditions before irreversible actions (e.g., won't send email if attachment failed).
 
 **Requirements**:
 - macOS: `brew install steipete/tap/peekaboo` + Accessibility permission
