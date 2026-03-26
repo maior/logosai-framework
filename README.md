@@ -231,7 +231,7 @@ desktop_agent (dynamic LLM router — no hardcoded routes)
 | ScreenAnalyzer (lightweight + Vision) | ✅ | ✅ |
 | Intent Verification | ✅ | ✅ |
 
-**ScreenAnalyzer**: Lightweight check first (~0.1s AppleScript/JS) → Vision fallback only when needed (~3s). **Intent Verification**: verifies all preconditions before irreversible actions.
+**ScreenAnalyzer**: Lightweight check first (~0.1s AppleScript/JS) → Vision fallback only when needed (~3s). **Intent Verification**: verifies all preconditions before irreversible actions. **No Trace**: closes windows and restores previous app after completion (Cmd+W, not Cmd+Q).
 
 ### Auto Reports
 
