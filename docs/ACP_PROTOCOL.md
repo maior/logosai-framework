@@ -10,10 +10,12 @@ Frontend (logos_web:8010)
 Backend (logos_api:8090)
     ↓ HTTP/SSE
 ACP Server (:8888)
-    ├── JSON-RPC   — Agent discovery (list_agents)
-    ├── SSE Stream — Single/multi agent execution
-    ├── REST API   — Auto Reports management
-    └── Agents     — 50+ agents with call_agent() support
+    ├── JSON-RPC   — Agent discovery (list_agents, hot_register)
+    ├── SSE Stream — Single/multi agent execution (14-event pipeline)
+    ├── REST API   — Auto Reports, Failures, Learnings
+    ├── Agents     — 55+ agents with call_agent() support
+    ├── L3/L4      — ask_opinion, share_learning (real-time collaboration)
+    └── Evolution  — GapDetector, ForgeBridge, RollbackManager, EvolutionMonitor
 ```
 
 ## Endpoints
