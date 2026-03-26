@@ -1,14 +1,14 @@
 # LogosAI
 
 [![PyPI](https://img.shields.io/pypi/v/logosai.svg)](https://pypi.org/project/logosai/)
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Build AI agents in 4 lines. Orchestrate them in 10.**
+**Build AI agents in 4 lines. Orchestrate 55+ agents. Self-evolving.**
 
-LogosAI is a Python framework for building, orchestrating, and evolving AI agents. Create a single agent with minimal code, or build a multi-agent server with built-in communication, debate, and self-evolution capabilities.
+LogosAI is a Python framework for building, orchestrating, and evolving AI agents. Create a single agent with minimal code, or build a multi-agent system where agents collaborate, debate, learn from each other, and improve themselves autonomously.
 
-```python
+```bash
 pip install logosai
 ```
 
@@ -22,28 +22,25 @@ pip install logosai
   <img src="docs/self-evolution-flow.svg" alt="Self-Evolution Flow" width="100%"/>
 </p>
 
-> **[Interactive version](https://logosai.info/architecture)** — animated data flows, clickable components, live scenario demo.
-
 ## Why LogosAI?
 
-| | LogosAI | LangGraph | CrewAI |
-|---|---------|-----------|--------|
-| **Agent creation** | 4 lines (`@agent` decorator) | 30+ lines | 15+ lines |
-| **Built-in server** | `SimpleACPServer` — add agents & run | Manual setup | Manual setup |
-| **Agent-to-agent calls** | `self.call_agent()` — built-in | Manual wiring | Manual wiring |
-| **Desktop control** | KakaoTalk, Gmail, automation | — | — |
-| **Auto reports** | Scheduled search → KakaoTalk/Gmail/Telegram | — | — |
-| **Agent debate** | Agents negotiate workflows via voting | — | — |
-| **Self-evolution** | Agents auto-fix errors & learn | — | — |
-| **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric |
-| **Cross-platform** | macOS + Ubuntu | — | — |
-| **Streaming** | SSE + WebSocket built-in | Custom | Custom |
+| | LogosAI | LangGraph | CrewAI | OpenAI SDK |
+|---|---------|-----------|--------|------------|
+| **Agent creation** | 4 lines | 30+ lines | 15+ lines | 10+ lines |
+| **Built-in server** | `SimpleACPServer` | Manual | Manual | — |
+| **Agent-to-agent** | `call_agent()` built-in | Manual wiring | Manual | — |
+| **Agent debate** | 5-phase voting | — | — | — |
+| **Self-evolution** | Auto-fix + auto-deploy | — | — | — |
+| **L3 collaboration** | ask_opinion / share_finding | — | — | — |
+| **L4 learning** | share_learning (persisted) | — | — | — |
+| **Desktop control** | Gmail, KakaoTalk, Notion | — | — | — |
+| **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric | OpenAI only |
+| **Dynamic routing** | Tag-based auto-discovery | — | — | — |
+| **Streaming** | SSE + WebSocket built-in | Custom | Custom | — |
 
 ## Quick Start
 
 ### 1. One-Line LLM Call
-
-No agent, no setup — just ask:
 
 ```python
 import asyncio
@@ -53,45 +50,23 @@ async def main():
     answer = await quick_llm("What is the capital of France?")
     print(answer)  # "The capital of France is Paris."
 
-    # With system prompt
-    result = await quick_llm(
-        "Hello, how are you?",
-        system_prompt="Translate to Korean.",
-    )
-    print(result)  # "안녕하세요, 어떻게 지내세요?"
-
 asyncio.run(main())
 ```
 
-> Requires `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` in your environment.
-
 ### 2. Build an Agent (4 Lines)
 
-The `@agent` decorator turns any async function into a full agent:
-
 ```python
-import asyncio
 from logosai import agent, AgentResponse
 
 @agent(name="Joke Agent", description="Tells jokes about any topic")
 async def joke_agent(query, context=None, llm=None):
     response = await llm.invoke(f"Tell a short joke about: {query}")
     return AgentResponse.success(content={"answer": response.content})
-
-async def main():
-    bot = joke_agent()
-    result = await bot.process("programming")
-    print(result.content["answer"])
-
-asyncio.run(main())
 ```
 
 ### 3. Build an Agent (Class-Based)
 
-`SimpleAgent` gives you more control with `ask_llm()` helper and class attributes:
-
 ```python
-import asyncio
 from logosai import SimpleAgent, AgentResponse
 
 class TranslatorAgent(SimpleAgent):
@@ -101,89 +76,49 @@ class TranslatorAgent(SimpleAgent):
     async def handle(self, query, context=None):
         translation = await self.ask_llm(f"Translate to English: {query}")
         return AgentResponse.success(content={"answer": translation})
-
-async def main():
-    agent = TranslatorAgent()
-    result = await agent.process("안녕하세요, 반갑습니다")
-    print(result.content["answer"])
-
-asyncio.run(main())
 ```
 
 ### 4. Run a Multi-Agent Server
-
-Host multiple agents with JSON-RPC + SSE streaming in ~10 lines:
 
 ```python
 from logosai import SimpleAgent, AgentResponse
 from logosai.acp import SimpleACPServer
 
-class GreetingAgent(SimpleAgent):
-    agent_name = "Greeting Agent"
-    agent_description = "Greets users"
-
-    async def handle(self, query, context=None):
-        return AgentResponse.success(content={"answer": f"Hello! You said: {query}"})
-
 class MathAgent(SimpleAgent):
     agent_name = "Math Agent"
     agent_description = "Solves math problems"
-    llm_temperature = 0.0
 
     async def handle(self, query, context=None):
-        answer = await self.ask_llm(f"Calculate and return ONLY the result: {query}")
+        answer = await self.ask_llm(f"Calculate: {query}")
         return AgentResponse.success(content={"answer": answer})
 
 server = SimpleACPServer(port=9000)
-server.add(GreetingAgent())
 server.add(MathAgent())
 server.run()
 ```
 
-Test it:
-
 ```bash
 # List agents
-curl localhost:9000/jsonrpc \
-  -H "Content-Type: application/json" \
+curl localhost:9000/jsonrpc -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"list_agents"}'
 
-# Query an agent
-curl localhost:9000/jsonrpc \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"process","params":{"query":"3+5","agent_id":"math_agent"}}'
-
 # SSE streaming
-curl -N "localhost:9000/stream?query=Hello&agent_id=greeting_agent"
+curl -N "localhost:9000/stream?query=3+5&agent_id=math_agent"
 ```
 
-### 5. Use the LLM Client Directly
-
-Unified client for multiple providers:
+### 5. LLM Client (Multi-Provider)
 
 ```python
-import asyncio
 from logosai import LLMClient
 
-async def main():
-    client = LLMClient(provider="google", model="gemini-2.5-flash-lite")
-    await client.initialize()
+client = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+await client.initialize()
 
-    # Single prompt
-    response = await client.invoke("Explain async/await in Python")
-    print(response.content)
-
-    # Chat-style messages
-    response = await client.invoke_messages([
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "What is Python?"},
-    ])
-    print(response.content)
-
-asyncio.run(main())
+response = await client.invoke("Explain async/await in Python")
+print(response.content)
 ```
 
-Supported providers: `openai`, `anthropic`, `google` (Gemini), `ollama`
+Supported: `openai`, `anthropic`, `google` (Gemini), `ollama`
 
 ## Installation
 
@@ -193,51 +128,50 @@ pip install logosai[llm]     # + LLM providers (OpenAI, Anthropic, Gemini)
 pip install logosai[all]     # + All optional dependencies
 ```
 
-From source:
-
-```bash
-git clone https://github.com/maior/logosai-framework.git
-cd logosai-framework
-pip install -e ".[llm]"
-```
-
 ## Features
 
 ### Core
-
-- **`SimpleAgent`** — Subclass with `agent_name`, `agent_description`, and `handle()`. Auto-manages init, LLM, errors, and ACP compatibility
-- **`@agent` decorator** — Turn an async function into a full agent in 4 lines
-- **`quick_llm()`** — One-shot LLM call with no setup
-- **`LLMClient`** — Unified client for OpenAI, Anthropic, Google Gemini, Ollama
-- **`LogosAIAgent`** — Full-featured base class with async lifecycle (`initialize`, `process`, `shutdown`)
+- **`@agent` decorator** — 4-line agent creation
+- **`SimpleAgent`** — Class-based with `ask_llm()` helper
+- **`quick_llm()`** — One-shot LLM call
+- **`LLMClient`** — Unified multi-provider client (OpenAI, Anthropic, Gemini, Ollama)
+- **`LogosAIAgent`** — Full-featured base with async lifecycle
 
 ### Multi-Agent Orchestration
-
 - **SimpleACPServer** — Host agents with JSON-RPC + SSE streaming
-- **Message Bus** — Pub/sub messaging with topic routing and priorities
-- **Workflow Engine** — Sequential, parallel, and hybrid execution strategies
-- **Agent Collaboration** — Coordinated multi-agent task execution
+- **Message Bus** — Pub/sub with topic routing and priorities
+- **Workflow Engine** — Sequential, parallel, hybrid execution
+- **Dynamic Routing** — Tag-based auto-discovery, no hardcoded routes
 
-### Agent Debate System
+### Agent Communication (4 Levels)
 
-Agents autonomously negotiate and decide on workflows through voting:
-
-```python
-from logosai.debate import SimpleDebateSystem
-
-debate = SimpleDebateSystem()
-result = await debate.start_debate(
-    query="Analyze Q4 sales data and generate a forecast report.",
-    agents=my_agents,
-)
-print(result.workflow)  # Agreed-upon execution plan
+```
+L1: call_agent()      — Data passing (query → result)
+L2: Debate System     — 5-phase workflow negotiation (propose → vote → consensus)
+L3: Collaboration     — ask_opinion(), share_finding(), request_help()
+L4: Learning          — share_learning(), get_learnings() (persisted across sessions)
 ```
 
-**5-phase process**: Query Analysis → Role Proposal → Discussion → Voting → Consensus
+```python
+# L1: Call another agent
+result = await self.call_agent("internet_agent", "Seoul weather")
 
-### Agent Self-Evolution
+# L3: Ask for opinion (not just data — shares reasoning)
+opinion = await self.ask_opinion("analysis_agent",
+    "Is this a seasonal pattern?",
+    my_analysis={"pattern": "March spike", "confidence": 0.6})
 
-Agents that learn, heal, and improve autonomously:
+# L4: Share what you learned (persisted for all agents)
+await self.share_learning(
+    pattern="Gmail compose overlay breaks JS selectors",
+    solution="Add &fs=1 to compose URL",
+    tags=["gmail", "chrome"])
+
+# L4: Learn from others
+learnings = await self.get_learnings(tags=["gmail"])
+```
+
+### Self-Evolution
 
 ```python
 from logosai.evolution import EvolutionSystem, EvolutionConfig
@@ -245,21 +179,13 @@ from logosai.evolution import EvolutionSystem, EvolutionConfig
 config = EvolutionConfig(enabled=True, llm_provider="google")
 evolution = EvolutionSystem(agent, config)
 await evolution.enable()
-
-result = await evolution.evolve(
-    query="Convert 100 USD to KRW",
-    response="Not supported",
-)
-# result.improvements → suggested code fixes
 ```
 
 **Capabilities**: Self-Healing · Self-Growing · Self-Evaluation
 
-**Safety**: Circuit Breaker (3 failures → 1h cooldown) · Confidence Gates (4-tier validation) · Fix History (cycle prevention)
+**Safety**: Circuit Breaker (3 failures → 1h cooldown) · Confidence Gates · Fix History
 
 ### FORGE Agent Builder (Optional)
-
-Auto-generate, improve, and enhance agents with `logosai-forge`:
 
 ```bash
 pip install logosai-forge
@@ -269,187 +195,65 @@ pip install logosai-forge
 from logosai_forge import ForgeClient
 
 forge = ForgeClient()
-result = await forge.create_agent("Calculate BMI from weight and height")  # New agent
-result = await forge.improve_agent(code, failure_log)                      # Fix bugs
-result = await forge.enhance_agent(code, "add multiply and divide")        # Add features
+result = await forge.create_agent("Calculate BMI from weight and height")
+result = await forge.improve_agent(code, failure_log)      # Fix bugs
+result = await forge.enhance_agent(code, "add caching")    # Add features
 ```
 
-When integrated with the ACP server, FORGE enables **autonomous agent evolution**:
-
+Autonomous evolution loop:
 ```
-Agent fails → FailureLogger → 30% failure rate exceeded
-  → FORGE improve_agent() → Confidence Gate (≥0.95)
-  → RollbackManager backup → hot_register deploy
-  → EvolutionMonitor tracks → rollback if degraded
-```
-
-### Agent-to-Agent Communication
-
-Any agent can call another agent — built into the framework, no imports needed:
-
-```python
-class ResearchAgent(LogosAIAgent):
-    async def process(self, query, context=None):
-        # Search the web
-        result = await self.call_agent("internet_agent", query)
-
-        # Summarize the results
-        if len(result["answer"]) > 300:
-            summary = await self.call_agent("summarization_agent", result["answer"])
-            return summary["answer"]
-
-        return result["answer"]
-
-# See all available agents
-agents = self.available_agents()
-# ['internet_agent', 'calculator_agent', 'llm_search_agent', ...]
-```
-
-**How it works**: The ACP server automatically injects `_agent_registry` into every agent at registration. No configuration needed — `call_agent()` is available immediately.
-
-### Agent Collaboration (L3/L4)
-
-Beyond data passing — agents can exchange opinions, share discoveries, and learn from each other:
-
-```python
-# L3: Ask another agent for their opinion (not just data)
-opinion = await self.ask_opinion("analysis_agent", "Is this a seasonal pattern?",
-                                  my_analysis={"pattern": "March spike", "confidence": 0.6})
-if not opinion.agrees:
-    reconsider(opinion.reasoning)  # "Also consider marketing effect"
-
-# L3: Request help with reason
-help = await self.request_help("internet_agent", "Last year's weather data",
-                                reason="Need for seasonal comparison")
-
-# L4: Share what you learned (persisted for other agents)
-await self.share_learning(pattern="Gmail compose overlay breaks JS",
-                           solution="Add &fs=1 to compose URL",
-                           tags=["gmail", "chrome"])
-
-# L4: Learn from others' experiences
-learnings = await self.get_learnings(tags=["gmail"])
+Agent fails → FailureLogger → 30% threshold → FORGE improves
+→ Confidence Gate (≥0.95) → RollbackManager backup
+→ hot_register (zero-downtime deploy) → EvolutionMonitor tracks
 ```
 
 ### Desktop Agent
 
-Control your computer through natural language. Each desktop agent is an **independent ACP agent** — callable directly or via desktop_agent's `call_agent()`:
+Control your desktop through natural language — 55+ agents, each independent:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Telegram / Chat UI                                      │
-│  "Check my email" / "Send KakaoTalk" / "Notion todos"   │
-│         ↓                                                │
-│  desktop_agent (dynamic LLM router — no hardcoded routes) │
-│  ├── call_agent("kakaotalk_agent")     → KakaoTalk      │
-│  ├── call_agent("mail_desktop_agent")  → Gmail           │
-│  ├── call_agent("notion_desktop_agent") → Notion         │
-│  ├── call_agent("multi_ai_inquiry_agent") → AI 비교      │
-│  ├── call_agent("auto_report_agent")   → Scheduled       │
-│  └── screen_analyzer (lightweight + Vision fallback)     │
-└─────────────────────────────────────────────────────────┘
+desktop_agent (dynamic LLM router — no hardcoded routes)
+├── call_agent("kakaotalk_agent")       → KakaoTalk messaging
+├── call_agent("mail_desktop_agent")    → Gmail read/compose/attach
+├── call_agent("notion_desktop_agent")  → Notion pages/todos
+├── call_agent("multi_ai_inquiry_agent") → ChatGPT/Claude/Gemini compare
+├── call_agent("auto_report_agent")     → Scheduled search + delivery
+└── screen_analyzer (lightweight 0.1s + Vision 3s fallback)
 ```
-
-**Capabilities**:
 
 | Feature | macOS | Ubuntu |
 |---------|-------|--------|
 | Gmail read/compose/reply/attach | ✅ | ✅ Chrome CDP |
-| Gmail file attachment | ✅ Finder copy+paste | — |
-| KakaoTalk messaging | ✅ AppleScript Accessibility | ❌ No app |
-| Notion read/create/search/todos | ✅ Keyboard + Vision | ✅ |
-| Multi-AI Inquiry (ChatGPT/Claude/Gemini) | ✅ App + Chrome | ✅ Chrome |
-| WhatsApp messaging | ✅ URL scheme | ✅ |
-| Screenshot | ✅ screencapture | ✅ scrot |
-| App launch/control | ✅ | ✅ xdotool |
+| KakaoTalk messaging | ✅ AppleScript | ❌ |
+| Notion read/create/todos | ✅ Keyboard + Vision | ✅ |
+| Multi-AI Inquiry | ✅ App + Chrome | ✅ Chrome |
 | Auto Reports (scheduled) | ✅ | ✅ |
-| Telegram delivery | ✅ | ✅ |
-| ScreenAnalyzer (Vision) | ✅ Gemini Vision | ✅ |
+| ScreenAnalyzer (lightweight + Vision) | ✅ | ✅ |
+| Intent Verification | ✅ | ✅ |
 
-**All routing is LLM-based** — no hardcoded keywords. The LLM router determines which sub-agent handles each query.
-
-**ScreenAnalyzer** — Lightweight check first (~0.1s via AppleScript/JS), Vision fallback only when needed (~3s). Intent Verification: verifies all preconditions before irreversible actions (e.g., won't send email if attachment failed).
-
-**Requirements**:
-- macOS: `brew install steipete/tap/peekaboo` + Accessibility permission
-- Ubuntu: `sudo apt install xdotool xclip scrot`
-- Both: `pip install pyautogui Pillow`
-
-> All dependencies are installed automatically by `install.sh`.
+**ScreenAnalyzer**: Lightweight check first (~0.1s AppleScript/JS) → Vision fallback only when needed (~3s). **Intent Verification**: verifies all preconditions before irreversible actions.
 
 ### Auto Reports
 
-Schedule periodic searches delivered via KakaoTalk, Gmail, or Telegram:
-
 ```
-"Every morning at 8am, search Seoul weather and send via KakaoTalk"
-"Every evening at 6pm, send Bitcoin price report via email"
-"Show auto report list"
-"Run report #1 now"
+"매일 아침 8시에 서울 날씨 검색해서 카카오톡으로 보내줘"
+"비트코인이 8만달러 넘으면 메일로 알려줘"
 ```
 
-**Web management UI**: `http://localhost:8010/auto-reports`
+Conditional execution · AI summary · Multi-channel (KakaoTalk/Gmail/Telegram)
 
-- Create, edit, delete, run reports visually
-- KakaoTalk / Gmail / Telegram delivery channels
-- **Conditional execution**: "Only send if Bitcoin > $80,000" — LLM evaluates conditions
-- **AI summary**: Long results auto-summarized to 3-5 bullet points before delivery
-- **Multi-recipient**: Send to multiple people across different channels simultaneously
-- Execution history tracking with success/failure status
-- Flexible scheduling (daily, weekdays, custom days)
-
-### Agentic AI Modules
-
-| Module | Purpose |
-|--------|---------|
-| `AgenticReasoning` | Chain-of-thought planning |
-| `AgenticTools` | Tool registration and execution |
-| `AgenticMemory` | Short-term and long-term memory |
-| `AgenticLearning` | Learning from interactions |
-
-### Template Engine
-
-Generate agent code from built-in templates:
-
-```python
-from logosai.template_engine import TemplateEngine
-
-engine = TemplateEngine()
-code = engine.render("basic_agent", name="WeatherAgent", description="Fetches weather data")
-```
-
-Templates: `basic_agent`, `async_agent`, `workflow_agent`, `database_agent`, `singleton_agent`
+Web management: `http://localhost:8010/auto-reports`
 
 ## Documentation
 
 | Guide | Description |
 |-------|-------------|
-| [ACP Protocol](docs/ACP_PROTOCOL.md) | Agent Communication Protocol — endpoints, call_agent(), Auto Reports API |
-| [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | Complete guide — LLM integration, collaboration, debate, evolution |
+| [ACP Protocol](docs/ACP_PROTOCOL.md) | Agent Communication Protocol — endpoints, call_agent(), Auto Reports |
+| [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | LLM integration, collaboration, debate, evolution |
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |
-| [Samples](samples/) | Runnable examples — includes `ResearchAgent` (call_agent() demo) |
-
-## Requirements
-
-**Core** (installed automatically): Python 3.11+, aiohttp, pydantic, loguru
-
-**LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai, langchain
-
-**Desktop Agent** (installed by `install.sh`):
-- macOS: Peekaboo (`brew install steipete/tap/peekaboo`), pyautogui
-- Ubuntu: xdotool, xclip, scrot, pyautogui
-
-**Full Stack**: Node.js 18+, PostgreSQL 14+
-
-## License
-
-[MIT](LICENSE) — Copyright (c) 2023-2026 LogosAI
+| [Samples](samples/) | Runnable examples — ResearchAgent, calculator, hello world |
 
 ## Full Stack Quick Start
-
-Want the complete LogosAI platform (frontend + backend + agents)? Two options:
-
-### Option A: One-command install
 
 **macOS:**
 ```bash
@@ -461,9 +265,6 @@ curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/instal
 curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-ubuntu.sh | bash
 ```
 
-This creates `~/logosai/`, clones all 4 repos, installs dependencies, and sets up the database.
-Then start everything:
-
 ```bash
 cd ~/logosai
 ./start.sh       # Start all services
@@ -471,64 +272,35 @@ cd ~/logosai
 ./status.sh      # Check what's running
 ```
 
-Requires Python 3.11+, Node.js 18+, and PostgreSQL 14+ (or Docker).
-
-### Option B: Docker Compose
-
-```bash
-git clone https://github.com/maior/logosai-framework.git
-cd logosai-framework
-docker compose up
-```
-
-Includes PostgreSQL — no local database needed.
-
-### Services
-
-| Service | Port | What it does |
+| Service | Port | Description |
 |---------|------|-------------|
-| logos_web | 8010 | Next.js frontend — chat UI, auto reports management |
+| logos_web | 8010 | Next.js frontend — chat UI, auto reports, [architecture](/architecture) |
 | logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
-| ACP Server | 8888 | Agent runtime — 55+ agents with inter-agent communication |
+| ACP Server | 8888 | Agent runtime — 55+ agents, self-evolution, L3/L4 |
 | PostgreSQL | 5432 | Database |
 
-Open http://localhost:8010 to start chatting.
+## Requirements
 
-## Recent Updates (2026-03)
+**Core**: Python 3.11+, aiohttp, pydantic, loguru
 
-### Self-Evolution System
-- **GapDetector** → detects missing agents → **FORGE** generates new ones → **hot_register** deploys with zero downtime
-- **FailureLogger** → 30% failure rate → auto-improvement → **Confidence Gate** (≥0.95 auto-deploy)
-- **RollbackManager** → version snapshots → auto-rollback if degraded
-- **EvolutionMonitor** → tracks post-deployment health
-- **logosai-forge** (`pip install logosai-forge`) — create/improve/enhance agents as library
+**LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai, langchain
 
-### Agent Architecture
-- **55 agents** (was 50) — desktop agents now independent ACP agents
-- **Dynamic routing** — desktop_agent discovers agents via tags, no hardcoded routes
-- **L3 collaboration** — ask_opinion(), share_finding(), request_help()
-- **L4 learning** — share_learning() + LearningStore (persisted JSON, shared across agents)
+**Desktop Agent**: macOS: Peekaboo + Accessibility · Ubuntu: xdotool, xclip, scrot
 
-### Desktop Agent
-- **ScreenAnalyzer** — lightweight check (~0.1s AppleScript) → Vision fallback (~3s) only when needed
-- **Intent Verification** — verify_ready_to_act() before irreversible actions (won't send email if attachment failed)
-- **Multi-AI Inquiry** — query ChatGPT/Claude/Gemini simultaneously, synthesize comparison
-
-### Infrastructure
-- **Architecture page** — interactive visualization at /architecture (logos_web)
-- **OS-specific installers** — install-macos.sh + install-ubuntu.sh (fixes BSD/GNU differences)
+**Full Stack**: Node.js 18+, PostgreSQL 14+
 
 ## Related Repositories
 
-| Repository | Description | URL |
-|-----------|-------------|-----|
-| **logosai-ontology** | Multi-agent orchestration engine | [github.com/maior/logosai-ontology](https://github.com/maior/logosai-ontology) |
-| **logosai-api** | FastAPI backend server | [github.com/maior/logosai-api](https://github.com/maior/logosai-api) |
-| **logosai-web** | Next.js frontend | [github.com/maior/logosai-web](https://github.com/maior/logosai-web) |
+| Repository | Description |
+|-----------|-------------|
+| [logosai-ontology](https://github.com/maior/logosai-ontology) | Multi-agent orchestration (GNN+RL+KG+LLM) |
+| [logosai-api](https://github.com/maior/logosai-api) | FastAPI backend server |
+| [logosai-web](https://github.com/maior/logosai-web) | Next.js frontend |
 
-## Links
+## License
 
-- [PyPI](https://pypi.org/project/logosai/)
-- [GitHub](https://github.com/maior/logosai-framework)
-- [Issues](https://github.com/maior/logosai-framework/issues)
-- [Samples](samples/)
+[MIT](LICENSE) — Copyright (c) 2023-2026 LogosAI
+
+---
+
+[PyPI](https://pypi.org/project/logosai/) · [GitHub](https://github.com/maior/logosai-framework) · [Issues](https://github.com/maior/logosai-framework/issues) · [Samples](samples/)
