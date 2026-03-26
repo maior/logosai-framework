@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logosai"
-version = "0.11.0"
+version = "0.11.1"
 description = "Build AI agents in 4 lines. Orchestrate 55+ agents. Self-evolving."
 readme = "README.md"
 requires-python = ">=3.11"

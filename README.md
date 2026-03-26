@@ -15,11 +15,11 @@ pip install logosai
 ## Architecture
 
 <p align="center">
-  <img src="docs/architecture-overview.svg" alt="LogosAI System Architecture" width="100%"/>
+  <img src="https://raw.githubusercontent.com/maior/logosai-framework/main/docs/architecture-overview.svg" alt="LogosAI System Architecture" width="100%"/>
 </p>
 
 <p align="center">
-  <img src="docs/self-evolution-flow.svg" alt="Self-Evolution Flow" width="100%"/>
+  <img src="https://raw.githubusercontent.com/maior/logosai-framework/main/docs/self-evolution-flow.svg" alt="Self-Evolution Flow" width="100%"/>
 </p>
 
 ## Why LogosAI?
@@ -236,8 +236,8 @@ desktop_agent (dynamic LLM router — no hardcoded routes)
 ### Auto Reports
 
 ```
-"매일 아침 8시에 서울 날씨 검색해서 카카오톡으로 보내줘"
-"비트코인이 8만달러 넘으면 메일로 알려줘"
+"Every morning at 8am, search Seoul weather and send via KakaoTalk"
+"If Bitcoin exceeds $80,000, notify me by email"
 ```
 
 Conditional execution · AI summary · Multi-channel (KakaoTalk/Gmail/Telegram)
