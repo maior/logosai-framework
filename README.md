@@ -140,8 +140,9 @@ pip install logosai[all]     # + All optional dependencies
 ### Multi-Agent Orchestration
 - **SimpleACPServer** — Host agents with JSON-RPC + SSE streaming
 - **Message Bus** — Pub/sub with topic routing and priorities
-- **Workflow Engine** — Sequential, parallel, hybrid execution
+- **Workflow Engine** — Sequential, parallel, hybrid with enriched data pipeline
 - **Dynamic Routing** — Tag-based auto-discovery, no hardcoded routes
+- **Data Flow** — Previous agent results automatically injected into next agent's query
 
 ### Agent Communication (4 Levels)
 
