@@ -276,7 +276,7 @@ cd ~/logosai
 
 | Service | Port | Description |
 |---------|------|-------------|
-| logos_web | 8010 | Next.js frontend — chat UI, auto reports, [architecture](/architecture) |
+| logos_web | 8010 | Next.js frontend — chat, [admin](/admin), auto reports, [architecture](/architecture) |
 | logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
 | ACP Server | 8888 | Agent runtime — 55+ agents, self-evolution, L3/L4 |
 | PostgreSQL | 5432 | Database |
