@@ -143,6 +143,7 @@ pip install logosai[all]     # + All optional dependencies
 - **Workflow Engine** — Sequential, parallel, hybrid with enriched data pipeline
 - **Dynamic Routing** — Tag-based auto-discovery, no hardcoded routes
 - **Data Flow** — Previous agent results automatically injected into next agent's query
+- **Document Search** — Semantic search across project docs (LLM-indexed, "where is this info?")
 
 ### Agent Communication (4 Levels)
 
