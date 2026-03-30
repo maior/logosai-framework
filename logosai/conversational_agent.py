@@ -19,23 +19,26 @@ from .types import MessageBusProtocol
 from loguru import logger
 
 # Django 서버 모듈들 (선택적 import)
+import sys
+import os
+
+DJANGO_INTEGRATION_AVAILABLE = False
 try:
-    import sys
-    import os
-    # Django 프로젝트 경로 추가
+    # Django 통합 — 환경변수로 명시적 활성화 시에만
     django_path = os.path.join(os.path.dirname(__file__), '../../logos_server')
-    if django_path not in sys.path:
-        sys.path.append(django_path)
-    
-    from app_agent.agent_dialogue_protocol import (
-        AgentDialogueMessage, MessageType, AgentCapabilityDiscovery
-    )
-    from app_agent.interactive_parameter_collector import (
-        InteractiveParameterCollector, CollectionStrategy
-    )
-    DJANGO_INTEGRATION_AVAILABLE = True
-except ImportError as e:
-    pass  # Expected in standalone mode — no logging needed
+    _want_django = os.getenv("LOGOSAI_DJANGO_INTEGRATION", "")
+    if _want_django and os.path.isdir(os.path.join(django_path, 'app_agent')):
+        if django_path not in sys.path:
+            sys.path.append(django_path)
+
+        from app_agent.agent_dialogue_protocol import (
+            AgentDialogueMessage, MessageType, AgentCapabilityDiscovery
+        )
+        from app_agent.interactive_parameter_collector import (
+            InteractiveParameterCollector, CollectionStrategy
+        )
+        DJANGO_INTEGRATION_AVAILABLE = True
+except ImportError:
     DJANGO_INTEGRATION_AVAILABLE = False
     
     # 더미 클래스 정의

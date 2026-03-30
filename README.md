@@ -4,9 +4,9 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Build AI agents in 4 lines. Orchestrate 55+ agents. Self-evolving.**
+**Personal AI agent framework — build agents in 4 lines, no server required.**
 
-LogosAI is a Python framework for building, orchestrating, and evolving AI agents. Create a single agent with minimal code, or build a multi-agent system where agents collaborate, debate, learn from each other, and improve themselves autonomously.
+LogosAI is a Python framework for building, orchestrating, and evolving AI agents on your own machine. SQLite for storage, multi-provider LLM support, and a CLI to get started in 30 seconds.
 
 ```bash
 pip install logosai
@@ -274,9 +274,19 @@ Web management: `http://localhost:8010/auto-reports`
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |
 | [Samples](samples/) | Runnable examples — ResearchAgent, calculator, hello world |
 
+## CLI
+
+```bash
+logosai init               # Create ~/.logosai/ (config + SQLite database)
+logosai status             # Show config, API keys, DB size
+logosai serve              # Start agent server (default port 9000)
+logosai serve --port 8888  # Custom port
+logosai agents             # List agents on running server
+```
+
 ## Data Storage
 
-LogosAI Personal uses **SQLite** — zero-config, single file at `~/.logosai/logosai.db`.
+LogosAI uses **SQLite** — zero-config, single file at `~/.logosai/logosai.db`.
 
 ```python
 from logosai import LocalStore

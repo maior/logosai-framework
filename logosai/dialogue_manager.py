@@ -13,29 +13,31 @@ from datetime import datetime
 from enum import Enum
 from loguru import logger
 
-# Django 서버 통합 (선택적)
-try:
-    import sys
-    import os
-    django_path = os.path.join(os.path.dirname(__file__), '../../logos_server')
-    if django_path not in sys.path:
-        sys.path.append(django_path)
-    
-    from app_agent.agent_dialogue_protocol import (
-        AgentDialogueMessage, MessageType, AgentCapabilityDiscovery
-    )
-    from app_agent.interactive_parameter_collector import (
-        InteractiveParameterCollector, CollectionStrategy, QueryAnalysis
-    )
-    from app_agent.query_analyzer import QueryAnalyzer
-    from app_agent.query_transformer import QueryTransformer
-    from app_agent.websocket_handler import WebSocketHandler
-    
-    DJANGO_INTEGRATION = True
-    logger.debug("Django dialogue system integration complete")
+# Django 서버 통합 (선택적 — LOGOSAI_DJANGO_INTEGRATION=1 일 때만 활성화)
+import sys
+import os
 
-except ImportError as e:
-    pass  # Expected in standalone mode — no logging needed
+DJANGO_INTEGRATION = False
+try:
+    django_path = os.path.join(os.path.dirname(__file__), '../../logos_server')
+    _want_django = os.getenv("LOGOSAI_DJANGO_INTEGRATION", "")
+    if _want_django and os.path.isdir(os.path.join(django_path, 'app_agent')):
+        if django_path not in sys.path:
+            sys.path.append(django_path)
+
+        from app_agent.agent_dialogue_protocol import (
+            AgentDialogueMessage, MessageType, AgentCapabilityDiscovery
+        )
+        from app_agent.interactive_parameter_collector import (
+            InteractiveParameterCollector, CollectionStrategy, QueryAnalysis
+        )
+        from app_agent.query_analyzer import QueryAnalyzer
+        from app_agent.query_transformer import QueryTransformer
+        from app_agent.websocket_handler import WebSocketHandler
+
+        DJANGO_INTEGRATION = True
+        logger.debug("Django dialogue system integration complete")
+except ImportError:
     DJANGO_INTEGRATION = False
     
     # 독립 모드용 더미 클래스
