@@ -302,6 +302,13 @@ try:
 except ImportError as e:
     _logger.debug("Collaboration system not available: %s", e)
 
+# ── Local Storage (Personal Mode) ──
+try:
+    from .storage import LocalStore
+    __all__ += ["LocalStore"]
+except ImportError as e:
+    _logger.debug("LocalStore not available: %s", e)
+
 # Show SDK info only when explicitly requested
 if _os.getenv("LOGOSAI_SHOW_INFO", "").lower() == "true":
     try:

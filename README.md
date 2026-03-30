@@ -123,10 +123,29 @@ Supported: `openai`, `anthropic`, `google` (Gemini), `ollama`
 ## Installation
 
 ```bash
-pip install logosai          # Core framework
+pip install logosai          # Core framework (zero dependencies beyond aiohttp, pydantic)
 pip install logosai[llm]     # + LLM providers (OpenAI, Anthropic, Gemini)
-pip install logosai[all]     # + All optional dependencies
+pip install logosai[desktop] # + Desktop automation (macOS/Linux)
+pip install logosai[all]     # Everything
 ```
+
+### Personal Setup (30 seconds)
+
+```bash
+# 1. Install
+pip install logosai[llm]
+
+# 2. Initialize (creates ~/.logosai/ with SQLite database)
+logosai init
+
+# 3. Set your API key
+export GOOGLE_API_KEY=your-key   # or OPENAI_API_KEY, ANTHROPIC_API_KEY
+
+# 4. Check
+logosai status
+```
+
+No PostgreSQL. No Docker. No server setup. Just Python + API key.
 
 ## Features
 
@@ -255,31 +274,26 @@ Web management: `http://localhost:8010/auto-reports`
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |
 | [Samples](samples/) | Runnable examples — ResearchAgent, calculator, hello world |
 
-## Full Stack Quick Start
+## Data Storage
 
-**macOS:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-macos.sh | bash
+LogosAI Personal uses **SQLite** — zero-config, single file at `~/.logosai/logosai.db`.
+
+```python
+from logosai import LocalStore
+
+store = LocalStore()
+await store.initialize()
+
+# Agent learnings persist across sessions
+await store.save_learning("my_agent", "Gmail compose quirk", "Add &fs=1 to URL", tags=["gmail"])
+learnings = await store.get_learnings(tags=["gmail"])
+
+# Session history
+await store.save_message(session_id, "my_agent", "What's the weather?", role="user")
+
+# Agent performance metrics
+stats = await store.get_agent_stats()
 ```
-
-**Ubuntu / Debian:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-ubuntu.sh | bash
-```
-
-```bash
-cd ~/logosai
-./start.sh       # Start all services
-./stop.sh        # Stop all services
-./status.sh      # Check what's running
-```
-
-| Service | Port | Description |
-|---------|------|-------------|
-| logos_web | 8010 | Next.js frontend — chat, [admin](/admin), auto reports, [architecture](/architecture) |
-| logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
-| ACP Server | 8888 | Agent runtime — 55+ agents, self-evolution, L3/L4 |
-| PostgreSQL | 5432 | Database |
 
 ## Requirements
 
@@ -287,9 +301,7 @@ cd ~/logosai
 
 **LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai, langchain
 
-**Desktop Agent**: macOS: Peekaboo + Accessibility · Ubuntu: xdotool, xclip, scrot
-
-**Full Stack**: Node.js 18+, PostgreSQL 14+
+**Desktop Agent** (`pip install logosai[desktop]`): macOS: Peekaboo + Accessibility · Ubuntu: xdotool, xclip, scrot
 
 ## Related Repositories
 

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logosai"
-version = "0.11.1"
-description = "Build AI agents in 4 lines. Orchestrate 55+ agents. Self-evolving."
+version = "0.12.0"
+description = "Build AI agents in 4 lines. Personal AI agent framework — no server required."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
@@ -54,6 +54,10 @@ llm = [
     "langchain-openai>=0.0.8",
     "langchain-community>=0.0.28",
 ]
+desktop = [
+    "pyautogui>=0.9.53",
+    "pillow>=9.0.0",
+]
 all = [
     "logosai[llm]",
     "tavily-python>=0.3.0",
@@ -67,6 +71,7 @@ Repository = "https://github.com/maior/logosai-framework"
 Issues = "https://github.com/maior/logosai-framework/issues"
 
 [project.scripts]
+logosai = "logosai.cli.main:main"
 logosai-serve = "logosai.cli.serve:main"
 logosai-agent = "logosai.cli.agent:main"
 
