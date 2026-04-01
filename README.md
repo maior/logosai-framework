@@ -27,16 +27,20 @@ pip install logosai
 | | LogosAI | LangGraph | CrewAI | OpenAI SDK |
 |---|---------|-----------|--------|------------|
 | **Agent creation** | 4 lines | 30+ lines | 15+ lines | 10+ lines |
-| **Built-in server** | `SimpleACPServer` | Manual | Manual | — |
-| **Agent-to-agent** | `call_agent()` built-in | Manual wiring | Manual | — |
-| **Agent debate** | 5-phase voting | — | — | — |
-| **Self-evolution** | Auto-fix + auto-deploy | — | — | — |
-| **L3 collaboration** | ask_opinion / share_finding | — | — | — |
-| **L4 learning** | share_learning (persisted) | — | — | — |
-| **Desktop control** | Gmail, KakaoTalk, Notion | — | — | — |
+| **Tool Use (function calling)** | ✅ Auto-inject | ✅ | ✅ | ✅ |
+| **ReAct (Think→Act→Observe)** | ✅ `react()` | ✅ | ✅ | ✅ |
+| **Persistent Memory** | ✅ PostgreSQL/SQLite | ✅ | ✅ | Limited |
+| **LLM Streaming** | ✅ Token-by-token | ✅ | — | ✅ |
+| **Structured Output** | ✅ Pydantic schema | ✅ | ✅ | ✅ |
+| **Error Recovery** | ✅ @retry + re-prompt | ✅ | ✅ | ✅ |
+| **Context Management** | ✅ Auto-pruning | ✅ | — | ✅ |
+| **Self-evolution** | ✅ Auto-fix + deploy | — | — | — |
+| **Desktop control** | ✅ Gmail, KakaoTalk, Notion | — | — | — |
+| **Browser search** | ✅ Real Chrome | — | — | — |
+| **Agent-to-agent** | ✅ `call_agent()` built-in | Manual | Manual | — |
+| **Agent debate** | ✅ 5-phase voting | — | — | — |
+| **Sub-agent spawn** | ✅ `spawn_agent()` | ✅ | ✅ | — |
 | **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric | OpenAI only |
-| **Dynamic routing** | Tag-based auto-discovery | — | — | — |
-| **Streaming** | SSE + WebSocket built-in | Custom | Custom | — |
 
 ## Quick Start
 
@@ -191,6 +195,54 @@ await self.share_learning(
 # L4: Learn from others
 learnings = await self.get_learnings(tags=["gmail"])
 ```
+
+### Agentic AI (NEW v0.12)
+
+Agents autonomously use tools, reason step-by-step, and remember past interactions.
+
+```python
+# Tool Use — agent autonomously selects and uses tools
+agent.register_builtin_tools()  # calculator, datetime, text
+answer = await agent.ask_llm("What's 2^20?")
+# → LLM calls calculator(2**20) → "1,048,576"
+
+# ReAct — Think → Act → Observe loop
+result = await agent.react(
+    "Calculate compound interest: $10K at 8% for 5 years, then convert to KRW",
+    tools=BUILTIN_TOOLS, tool_executors=BUILTIN_EXECUTORS,
+)
+# → Thought: "Need to calculate compound interest"
+# → Action: calculator(10000 * 1.08**5) → $14,693
+# → Thought: "Now convert to KRW"
+# → Action: calculator(14693 * 1380) → ₩20,276,340
+# → Final Answer: "₩20,276,340"
+
+# Persistent Memory — agents remember across sessions
+await agent.memorize("user_pref", "User prefers Korean", importance=0.9)
+memories = await agent.recall("user")  # Auto-injected into LLM context
+
+# Structured Output — enforce JSON schema
+from pydantic import BaseModel
+class Weather(BaseModel):
+    city: str
+    temperature: float
+
+result = await agent.ask_llm_structured("Seoul weather", Weather)
+# → Weather(city="Seoul", temperature=22.5)
+
+# Dynamic Sub-Agent — create specialists at runtime
+translator = agent.spawn_agent("translator", "Translates text", my_func)
+results = await agent.delegate([
+    {"agent_id": "translator", "query": "Hello"},
+    {"agent_id": "calculator", "query": "1+1"},
+], parallel=True)
+
+# LLM Streaming — token-by-token
+async for chunk in agent.ask_llm_stream("Tell me about AI"):
+    print(chunk, end="")
+```
+
+**Capabilities**: Tool Use · ReAct · Memory · Streaming · Structured Output · Error Recovery · Context Management
 
 ### Self-Evolution
 
