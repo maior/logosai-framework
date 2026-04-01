@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Dict, Any, Optional, Union, List, Tuple, TYPE_CHECKING
 from .agent_types import AgentType, AgentResponse, AgentResponseType
 from .config import AgentConfig
@@ -89,6 +90,16 @@ class LogosAIAgent:
         # Agent registry for direct agent-to-agent calls (injected by ACP server)
         # Usage: result = await self.call_agent("internet_agent", "search query")
         self._agent_registry: Optional[Dict[str, 'LogosAIAgent']] = None
+
+        # Tool registry — agents can register tools for autonomous use
+        self._tools: List[Dict] = []
+        self._tool_executors: Dict[str, Any] = {}
+
+        # Memory store — persistent agent memory (PostgreSQL)
+        self._memory_store = None
+
+        # Tool usage metrics
+        self._tool_metrics: Dict[str, Dict] = {}  # tool_name → {calls, successes, failures}
     
     def _should_enable_agentic(self) -> bool:
         """Determine whether to enable Agentic AI features"""
@@ -160,6 +171,453 @@ class LogosAIAgent:
         """
         self.initialized = True
         return True
+
+    # ═══════════════════════════════════════════
+    # Tool Registration
+    # ═══════════════════════════════════════════
+
+    def register_tool(self, name: str, description: str, executor, parameters: Dict = None):
+        """Register a tool that this agent can use autonomously.
+
+        Args:
+            name: Tool name (unique)
+            description: What the tool does (LLM reads this)
+            executor: Async or sync callable
+            parameters: {param_name: {"type": "string", "description": "..."}}
+
+        Example:
+            agent.register_tool(
+                "search", "Search the web for information",
+                my_search_func,
+                {"query": {"type": "string", "description": "Search query"}}
+            )
+        """
+        # Remove existing tool with same name
+        self._tools = [t for t in self._tools if t["name"] != name]
+        self._tools.append({
+            "name": name,
+            "description": description,
+            "parameters": parameters or {},
+        })
+        self._tool_executors[name] = executor
+        self.logger.debug(f"Tool registered: {name} ({len(self._tools)} total)")
+
+    def register_builtin_tools(self):
+        """Register all built-in tools (calculator, datetime, text)."""
+        try:
+            from .tools import BUILTIN_TOOLS, BUILTIN_EXECUTORS
+            for tool in BUILTIN_TOOLS:
+                self._tools = [t for t in self._tools if t["name"] != tool["name"]]
+                self._tools.append(tool)
+            self._tool_executors.update(BUILTIN_EXECUTORS)
+            self.logger.debug(f"Built-in tools registered: {[t['name'] for t in BUILTIN_TOOLS]}")
+        except ImportError:
+            self.logger.debug("Built-in tools not available")
+
+    @property
+    def has_tools(self) -> bool:
+        return bool(self._tools)
+
+    @property
+    def tool_metrics(self) -> Dict[str, Dict]:
+        """Get tool usage metrics: {tool_name: {calls, successes, failures}}."""
+        return self._tool_metrics
+
+    # ═══════════════════════════════════════════
+    # Persistent Memory
+    # ═══════════════════════════════════════════
+
+    async def _ensure_memory(self):
+        """Lazy-initialize memory store."""
+        if self._memory_store is None:
+            try:
+                from .storage.agent_memory_store import AgentMemoryStore
+                self._memory_store = AgentMemoryStore.get()
+                await self._memory_store.initialize()
+            except Exception as e:
+                self.logger.debug(f"Memory store unavailable: {e}")
+
+    async def memorize(self, key: str, content: str, importance: float = -1, tags: List[str] = None):
+        """Store a memory for this agent.
+
+        If importance is not provided (-1), LLM auto-evaluates it.
+
+        Example:
+            await self.memorize("gmail_tip", "Add &fs=1 to Gmail compose URL", tags=["gmail"])
+            # → LLM auto-evaluates importance (e.g., 0.85)
+        """
+        await self._ensure_memory()
+        if not self._memory_store:
+            return
+
+        # Auto-evaluate importance if not provided
+        if importance < 0:
+            importance = await self._evaluate_memory_importance(key, content)
+
+        await self._memory_store.store(self.id, key, content, importance=importance, tags=tags)
+
+    async def _evaluate_memory_importance(self, key: str, content: str) -> float:
+        """LLM auto-evaluates memory importance (0.0 - 1.0)."""
+        try:
+            llm = getattr(self, '_llm', None) or getattr(self, 'llm_client', None)
+            if not llm:
+                return 0.5
+
+            import re
+            resp = await asyncio.wait_for(llm.invoke(
+                f"Rate the importance of this information for an AI agent on a scale of 0.0 to 1.0.\n\n"
+                f"Key: {key}\nContent: {content}\n\n"
+                f"Criteria:\n"
+                f"- 0.9-1.0: Critical (user preferences, recurring errors, key facts)\n"
+                f"- 0.7-0.8: Important (useful patterns, domain knowledge)\n"
+                f"- 0.4-0.6: Moderate (general information)\n"
+                f"- 0.1-0.3: Low (trivial, temporary)\n\n"
+                f"Return ONLY a number between 0.0 and 1.0."
+            ), timeout=5)
+            text = resp.content if hasattr(resp, 'content') else str(resp)
+            match = re.search(r'(\d+\.?\d*)', text.strip())
+            if match:
+                return max(0.0, min(1.0, float(match.group(1))))
+        except Exception:
+            pass
+        return 0.5  # Default fallback
+
+    async def recall(self, query: str = "", tags: List[str] = None, top_k: int = 5) -> List[Dict]:
+        """Recall relevant memories for this agent.
+
+        Returns list of {key, content, importance, ...}
+        """
+        await self._ensure_memory()
+        if self._memory_store:
+            return await self._memory_store.recall(self.id, query=query, tags=tags, top_k=top_k)
+        return []
+
+    async def recall_as_context(self, query: str = "", top_k: int = 3) -> str:
+        """Recall memories and format as LLM context string.
+
+        Returns empty string if no relevant memories found.
+        Used internally by react()/run_with_tools() for auto-injection.
+        """
+        memories = await self.recall(query, top_k=top_k)
+        if not memories:
+            return ""
+        lines = [f"- {m['key']}: {m['content']}" for m in memories]
+        return "Relevant memories from past interactions:\n" + "\n".join(lines)
+
+    async def forget(self, key: str):
+        """Delete a specific memory."""
+        await self._ensure_memory()
+        if self._memory_store:
+            await self._memory_store.forget(self.id, key)
+
+    # ═══════════════════════════════════════════
+    # Tool Use Loop (Agentic AI)
+    # ═══════════════════════════════════════════
+
+    async def run_with_tools(
+        self,
+        query: str,
+        tools: List[Dict],
+        tool_executors: Dict[str, Any],
+        system_prompt: str = "",
+        max_iterations: int = 5,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> 'AgentResponse':
+        """Run agent with tool use loop.
+
+        LLM decides which tools to use, executes them, observes results,
+        and repeats until it has enough information to answer.
+
+        Args:
+            query: User query
+            tools: Tool definitions for LLM [{name, description, parameters}]
+            tool_executors: Mapping of tool name → async callable
+            system_prompt: System instruction for LLM
+            max_iterations: Maximum tool call rounds (safety limit)
+            context: Additional context
+
+        Returns:
+            AgentResponse with final answer (after tool use)
+
+        Example:
+            tools = [{"name": "calculator", "description": "...", "parameters": {...}}]
+            executors = {"calculator": async_calc_func}
+            result = await agent.run_with_tools("325/60은?", tools, executors)
+        """
+        from .agent_types import AgentResponse, AgentResponseType
+
+        if not self.initialized:
+            await self.initialize()
+
+        # Ensure LLM
+        llm = getattr(self, '_llm', None)
+        if not llm:
+            try:
+                from .utils.llm_client import LLMClient
+                llm = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+                await llm.initialize()
+                self._llm = llm
+            except Exception as e:
+                return AgentResponse(
+                    type=AgentResponseType.ERROR,
+                    content={"answer": f"LLM 초기화 실패: {e}"},
+                    message=str(e),
+                )
+
+        # Auto-inject relevant memories
+        memory_context = await self.recall_as_context(query, top_k=3)
+
+        # Build messages
+        messages = []
+        sys_content = system_prompt or ""
+        if memory_context:
+            sys_content += f"\n\n{memory_context}"
+        if sys_content:
+            messages.append({"role": "system", "content": sys_content})
+        messages.append({"role": "user", "content": query})
+
+        # Context window management
+        from .utils.context_manager import ContextManager
+        ctx_mgr = ContextManager(max_tokens=getattr(llm, 'max_tokens', 4000) or 4000)
+
+        # Tool use loop
+        for iteration in range(max_iterations):
+            # Auto-prune if context grows too large
+            messages = ctx_mgr.fit_messages(messages)
+
+            try:
+                response = await asyncio.wait_for(
+                    llm.invoke_with_tools(messages, tools=tools),
+                    timeout=15,
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                self.logger.warning(f"Tool loop LLM call failed (iter {iteration}): {e}")
+                break
+
+            # If no tool calls, we have the final answer
+            if not response.has_tool_calls:
+                return AgentResponse(
+                    type=AgentResponseType.SUCCESS,
+                    content={"answer": response.content, "iterations": iteration + 1},
+                    message="Tool use completed",
+                )
+
+            # Execute tool calls
+            for tc in response.tool_calls:
+                executor = tool_executors.get(tc.name)
+                if not executor:
+                    # Unknown tool — tell LLM
+                    messages.append({"role": "assistant", "content": f"[Tool call: {tc.name}({tc.args})]"})
+                    messages.append({"role": "user", "content": f"[Tool error: '{tc.name}' is not available]"})
+                    self.logger.warning(f"Tool '{tc.name}' not found in executors")
+                    continue
+
+                # Track metrics
+                if tc.name not in self._tool_metrics:
+                    self._tool_metrics[tc.name] = {"calls": 0, "successes": 0, "failures": 0}
+                self._tool_metrics[tc.name]["calls"] += 1
+
+                try:
+                    tool_result = await asyncio.wait_for(
+                        executor(**tc.args) if asyncio.iscoroutinefunction(executor) else asyncio.to_thread(executor, **tc.args),
+                        timeout=10,
+                    )
+                    tool_result_str = str(tool_result)
+
+                    # Validate result — empty/error detection
+                    is_valid = bool(tool_result_str) and len(tool_result_str) > 1 and "Error:" not in tool_result_str
+                    if is_valid:
+                        self._tool_metrics[tc.name]["successes"] += 1
+                        self.logger.info(f"  Tool [{tc.name}]: {tool_result_str[:80]}")
+                    else:
+                        self._tool_metrics[tc.name]["failures"] += 1
+                        self.logger.warning(f"  Tool [{tc.name}] invalid result: {tool_result_str[:80]}")
+                        tool_result_str = f"[Tool returned invalid result: {tool_result_str[:100]}. Try a different approach.]"
+
+                except Exception as e:
+                    self._tool_metrics[tc.name]["failures"] += 1
+                    tool_result_str = f"[Tool error: {e}. Try a different approach or answer without this tool.]"
+                    self.logger.warning(f"  Tool [{tc.name}] failed: {e}")
+
+                # Inject tool result back into conversation
+                messages.append({"role": "assistant", "content": f"[Tool call: {tc.name}({tc.args})]"})
+                messages.append({"role": "user", "content": f"[Tool result: {tc.name}] {tool_result_str}"})
+
+        # Max iterations reached — return whatever we have
+        return AgentResponse(
+            type=AgentResponseType.SUCCESS,
+            content={"answer": response.content if response else "도구 실행 결과를 종합할 수 없습니다.", "iterations": max_iterations},
+            message=f"Max iterations ({max_iterations}) reached",
+        )
+
+    # ═══════════════════════════════════════════
+    # ReAct Loop (Think → Act → Observe)
+    # ═══════════════════════════════════════════
+
+    async def react(
+        self,
+        query: str,
+        tools: List[Dict] = None,
+        tool_executors: Dict[str, Any] = None,
+        system_prompt: str = "",
+        max_steps: int = 5,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> 'AgentResponse':
+        """ReAct loop: Reasoning + Acting with explicit thought/observation steps.
+
+        Each step:
+          1. THINK: LLM reasons about what to do next (visible thought)
+          2. ACT: Execute a tool or generate final answer
+          3. OBSERVE: Evaluate tool result, decide if more steps needed
+
+        Args:
+            query: User query
+            tools: Tool definitions (optional — works without tools too)
+            tool_executors: Tool name → async callable
+            system_prompt: System instruction
+            max_steps: Maximum reasoning steps
+            context: Additional context
+
+        Returns:
+            AgentResponse with final answer + reasoning trace
+
+        Example:
+            result = await agent.react(
+                "서울~부산 거리 구해서 시속100km로 걸리는 시간 계산해줘",
+                tools=BUILTIN_TOOLS, tool_executors=BUILTIN_EXECUTORS,
+            )
+        """
+        from .agent_types import AgentResponse, AgentResponseType
+
+        if not self.initialized:
+            await self.initialize()
+
+        llm = getattr(self, '_llm', None)
+        if not llm:
+            try:
+                from .utils.llm_client import LLMClient
+                llm = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+                await llm.initialize()
+                self._llm = llm
+            except Exception as e:
+                return AgentResponse(
+                    type=AgentResponseType.ERROR,
+                    content={"answer": f"LLM 초기화 실패: {e}"},
+                    message=str(e),
+                )
+
+        # Auto-inject relevant memories into context
+        memory_context = await self.recall_as_context(query, top_k=3)
+
+        # Build ReAct system prompt
+        react_system = system_prompt or "당신은 문제를 단계적으로 해결하는 AI 에이전트입니다."
+        if memory_context:
+            react_system += f"\n\n{memory_context}\n"
+        react_system += """
+
+You must follow the ReAct pattern strictly:
+
+1. **Thought**: Analyze what you know and what you need to find out. Write your reasoning.
+2. **Action**: If you need more information, call a tool. If you have enough info, provide the final answer.
+3. **Observation**: After receiving tool results, analyze them and decide next step.
+
+Format your response EXACTLY like this:
+
+Thought: [your reasoning about what to do next]
+Action: [tool_call OR final_answer]
+
+When you have the final answer, respond with:
+Thought: [summary of reasoning]
+Final Answer: [your complete answer to the user]
+
+Always think step by step. Never skip the Thought step."""
+
+        messages = [{"role": "system", "content": react_system}]
+        messages.append({"role": "user", "content": query})
+
+        trace = []  # Reasoning trace for transparency
+        tools = tools or []
+        tool_executors = tool_executors or {}
+
+        for step in range(max_steps):
+            try:
+                # THINK + ACT: LLM generates thought and decides action
+                if tools and tool_executors:
+                    response = await asyncio.wait_for(
+                        llm.invoke_with_tools(messages, tools=tools), timeout=15
+                    )
+                else:
+                    response = await asyncio.wait_for(
+                        llm.invoke_messages(messages), timeout=15
+                    )
+            except (asyncio.TimeoutError, Exception) as e:
+                self.logger.warning(f"ReAct step {step} failed: {e}")
+                break
+
+            content = response.content or ""
+
+            # Parse thought from content
+            thought = ""
+            if "Thought:" in content:
+                thought = content.split("Thought:")[-1].split("Action:")[0].split("Final Answer:")[0].strip()
+
+            # Check for final answer
+            if "Final Answer:" in content:
+                final = content.split("Final Answer:")[-1].strip()
+                trace.append({"step": step + 1, "type": "final", "thought": thought, "answer": final})
+                return AgentResponse(
+                    type=AgentResponseType.SUCCESS,
+                    content={"answer": final, "steps": len(trace), "trace": trace},
+                    message="ReAct completed",
+                )
+
+            # Check for tool calls (from function calling)
+            if response.has_tool_calls:
+                for tc in response.tool_calls:
+                    trace.append({"step": step + 1, "type": "tool_call", "thought": thought, "tool": tc.name, "args": tc.args})
+
+                    executor = tool_executors.get(tc.name)
+                    if executor:
+                        try:
+                            result = await asyncio.wait_for(
+                                executor(**tc.args) if asyncio.iscoroutinefunction(executor)
+                                else asyncio.to_thread(executor, **tc.args),
+                                timeout=10,
+                            )
+                            result_str = str(result)
+                        except Exception as e:
+                            result_str = f"Error: {e}"
+                    else:
+                        result_str = f"Tool '{tc.name}' not available"
+
+                    trace.append({"step": step + 1, "type": "observation", "tool": tc.name, "result": result_str[:300]})
+                    self.logger.info(f"  ReAct [{step+1}] {tc.name} → {result_str[:60]}")
+
+                    # OBSERVE: inject result back
+                    messages.append({"role": "assistant", "content": f"Thought: {thought}\nAction: {tc.name}({tc.args})"})
+                    messages.append({"role": "user", "content": f"Observation: {result_str}"})
+                continue
+
+            # No tool call and no "Final Answer" — treat content as final
+            if content.strip():
+                trace.append({"step": step + 1, "type": "final", "thought": thought, "answer": content})
+                # Clean up — remove ReAct markers
+                clean = content
+                for marker in ["Thought:", "Action:", "Observation:"]:
+                    if marker in clean:
+                        clean = clean.split("Final Answer:")[-1] if "Final Answer:" in clean else clean
+                return AgentResponse(
+                    type=AgentResponseType.SUCCESS,
+                    content={"answer": clean.strip(), "steps": len(trace), "trace": trace},
+                    message="ReAct completed",
+                )
+
+        # Max steps reached
+        return AgentResponse(
+            type=AgentResponseType.SUCCESS,
+            content={"answer": content if content else "추론 단계를 초과했습니다.", "steps": len(trace), "trace": trace},
+            message=f"ReAct max steps ({max_steps}) reached",
+        )
 
     async def process(self, query: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
         """Process query
@@ -440,6 +898,118 @@ class LogosAIAgent:
         return list(self._agent_registry.keys())
 
     # ═══════════════════════════════════════════
+    # Dynamic Sub-Agent + Team Delegation
+    # ═══════════════════════════════════════════
+
+    def spawn_agent(
+        self,
+        name: str,
+        description: str,
+        handler,
+        tools: List[Dict] = None,
+        tool_executors: Dict = None,
+    ) -> 'LogosAIAgent':
+        """Create a specialized sub-agent at runtime.
+
+        The spawned agent inherits this agent's LLM and registry.
+        No server restart needed — lives in memory.
+
+        Args:
+            name: Agent name
+            description: What this agent does
+            handler: async function(query, context) → AgentResponse
+            tools: Optional tool definitions
+            tool_executors: Optional tool executors
+
+        Returns:
+            New agent instance (also registered in agent_registry)
+
+        Example:
+            translator = self.spawn_agent(
+                "translator", "Translates text",
+                handler=my_translate_func,
+            )
+            result = await self.call_agent("translator", "Translate to English: 안녕")
+        """
+        from .simple_agent import SimpleAgent
+        from .agent_types import AgentResponse, AgentResponseType
+
+        parent = self
+
+        class SpawnedAgent(SimpleAgent):
+            agent_name = name
+            agent_description = description
+
+            async def handle(self_inner, query, context=None):
+                if asyncio.iscoroutinefunction(handler):
+                    result = await handler(query, context)
+                else:
+                    result = handler(query, context)
+                if isinstance(result, AgentResponse):
+                    return result
+                return AgentResponse.success(content={"answer": str(result)})
+
+        agent = SpawnedAgent()
+        # Inherit parent's LLM and registry
+        agent._llm = getattr(parent, '_llm', None)
+        agent.llm_client = getattr(parent, 'llm_client', getattr(parent, '_llm', None))
+        agent._agent_registry = parent._agent_registry
+
+        # Register tools
+        if tools and tool_executors:
+            for t in tools:
+                agent._tools.append(t)
+            agent._tool_executors.update(tool_executors)
+        elif parent.has_tools:
+            agent._tools = parent._tools.copy()
+            agent._tool_executors = parent._tool_executors.copy()
+
+        # Register in agent registry so other agents can call it
+        agent_id = name.lower().replace(" ", "_")
+        if parent._agent_registry is not None:
+            parent._agent_registry[agent_id] = agent
+
+        self.logger.info(f"Spawned sub-agent: {name} (id={agent_id})")
+        return agent
+
+    async def delegate(
+        self,
+        tasks: List[Dict[str, str]],
+        parallel: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Delegate multiple tasks to different agents and collect results.
+
+        Args:
+            tasks: List of {"agent_id": "...", "query": "..."}
+            parallel: Run tasks in parallel (True) or sequential (False)
+
+        Returns:
+            List of {"agent_id": str, "success": bool, "answer": str}
+
+        Example:
+            results = await self.delegate([
+                {"agent_id": "internet_agent", "query": "Tesla stock price"},
+                {"agent_id": "internet_agent", "query": "Apple stock price"},
+            ], parallel=True)
+        """
+        if parallel:
+            coros = [
+                self.call_agent(t["agent_id"], t["query"], t.get("context"))
+                for t in tasks
+            ]
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            return [
+                r if isinstance(r, dict) else {"success": False, "answer": str(r), "agent_id": tasks[i].get("agent_id", "")}
+                for i, r in enumerate(results)
+            ]
+        else:
+            results = []
+            for t in tasks:
+                r = await self.call_agent(t["agent_id"], t["query"], t.get("context"))
+                results.append(r)
+            return results
+
+    # ═══════════════════════════════════════════
     # L3: Real-time Collaboration
     # ═══════════════════════════════════════════
 
@@ -632,6 +1202,82 @@ class LogosAIAgent:
 
     # ═══════════════════════════════════════════
     # L4: Learning Sharing
+    # ═══════════════════════════════════════════
+    # L5: Self-Evaluation (opt-in)
+    # ═══════════════════════════════════════════
+
+    async def self_evaluate(self, query: str, response: 'AgentResponse',
+                            context: Optional[Dict[str, Any]] = None) -> float:
+        """Evaluate the quality of own response before returning to user.
+
+        Returns quality score (0.0 - 1.0). Higher = better.
+        -1.0 = evaluation not available or disabled.
+
+        **Opt-in**: Only runs when LOGOSAI_SELF_EVAL=true env is set.
+        **Non-blocking fallback**: Returns -1.0 on any error (never blocks response).
+
+        Usage by subclasses:
+            result = await self.process(query, context)
+            score = await self.self_evaluate(query, result, context)
+            if score >= 0 and score < 0.3:
+                result = await self.process(query, context)  # retry
+        """
+        if not os.environ.get("LOGOSAI_SELF_EVAL"):
+            return -1.0
+
+        try:
+            # Get answer text from response
+            answer = ""
+            if hasattr(response, 'content') and isinstance(response.content, dict):
+                answer = str(response.content.get("answer", "")).strip()
+            if not answer and hasattr(response, 'content') and not isinstance(response.content, dict):
+                answer = str(response.content)[:500].strip()
+
+            if not answer or len(answer) < 10:
+                return -1.0  # Too short to evaluate
+
+            # Use LLM for quality assessment
+            llm = None
+            if hasattr(self, '_llm') and self._llm:
+                llm = self._llm
+            else:
+                try:
+                    from logosai.utils.llm_client import LLMClient
+                    llm = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+                    await llm.initialize()
+                except Exception:
+                    return -1.0
+
+            import asyncio as _aio
+            eval_prompt = (
+                f"Rate the quality of this AI agent response on a scale of 0.0 to 1.0.\n\n"
+                f"User query: {query[:200]}\n"
+                f"Agent response: {answer[:500]}\n\n"
+                f"Criteria:\n"
+                f"- Relevance: Does it answer the question? (0.3 weight)\n"
+                f"- Completeness: Is the answer thorough? (0.3 weight)\n"
+                f"- Accuracy: Does it seem factually correct? (0.2 weight)\n"
+                f"- Clarity: Is it easy to understand? (0.2 weight)\n\n"
+                f"Return ONLY a number between 0.0 and 1.0, nothing else."
+            )
+
+            resp = await _aio.wait_for(llm.invoke(eval_prompt), timeout=5)
+            score_text = resp.content if hasattr(resp, 'content') else str(resp)
+
+            # Extract float from response
+            import re
+            match = re.search(r'(\d+\.?\d*)', score_text.strip())
+            if match:
+                score = float(match.group(1))
+                score = max(0.0, min(1.0, score))
+                self.logger.info(f"Self-eval [{self.id}]: {score:.2f} for '{query[:40]}...'")
+                return score
+
+        except Exception as e:
+            self.logger.debug(f"Self-eval failed (non-fatal): {e}")
+
+        return -1.0
+
     # ═══════════════════════════════════════════
 
     async def share_learning(self, pattern: str, solution: str,

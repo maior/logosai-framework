@@ -1,13 +1,17 @@
-"""LogosAI Local Storage — SQLite-backed persistence for personal use.
+"""LogosAI Storage — persistent storage for agents.
 
-Provides lightweight, zero-config storage for:
-- Agent learnings (L4)
-- Session history
-- Agent metrics
-
-No external database required. Data stored in ~/.logosai/logosai.db
+- LocalStore: SQLite-backed (personal mode, pip install logosai)
+- AgentMemoryStore: PostgreSQL-backed (dev/production)
 """
 
-from .local_store import LocalStore
+try:
+    from .local_store import LocalStore
+except ImportError:
+    LocalStore = None
 
-__all__ = ["LocalStore"]
+try:
+    from .agent_memory_store import AgentMemoryStore
+except ImportError:
+    AgentMemoryStore = None
+
+__all__ = [x for x in ["LocalStore", "AgentMemoryStore"] if x is not None]
