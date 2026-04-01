@@ -117,6 +117,14 @@ class LLMMessage:
 
 
 @dataclass
+class ToolCall:
+    """LLM이 호출을 요청한 도구 정보."""
+    name: str
+    args: Dict[str, Any]
+    id: str = ""
+
+
+@dataclass
 class LLMResponse:
     """LLM 응답 표준 구조"""
     content: str
@@ -125,7 +133,12 @@ class LLMResponse:
     usage: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     raw_response: Optional[Any] = None
-    
+    tool_calls: Optional[List['ToolCall']] = None  # LLM이 호출을 요청한 도구들
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
+
     def __str__(self) -> str:
         """문자열 표현 - content를 반환"""
         return self.content
@@ -301,6 +314,66 @@ class LLMClient:
         """단일 메시지로 LLM 호출"""
         messages = [LLMMessage(role="user", content=message)]
         return await self.invoke_messages(messages, **kwargs)
+
+    async def invoke_stream(self, message: str, system_prompt: str = None):
+        """Stream LLM response token by token.
+
+        Yields chunks of text as they arrive from the LLM.
+
+        Args:
+            message: User prompt
+            system_prompt: Optional system instruction
+
+        Yields:
+            str: Text chunk
+
+        Example:
+            async for chunk in llm.invoke_stream("Tell me about AI"):
+                print(chunk, end="", flush=True)
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        if self.provider == "google":
+            async for chunk in self._stream_google(message, system_prompt):
+                yield chunk
+        else:
+            # Fallback: non-streaming (yield full response)
+            msgs = []
+            if system_prompt:
+                msgs.append(LLMMessage(role="system", content=system_prompt))
+            msgs.append(LLMMessage(role="user", content=message))
+            response = await self.invoke_messages(msgs)
+            yield response.content
+
+    async def _stream_google(self, message: str, system_prompt: str = None):
+        """Google Gemini streaming."""
+        import asyncio
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            temperature=self.temperature,
+            max_output_tokens=self.max_tokens or 4096,
+        )
+        if system_prompt:
+            config.system_instruction = system_prompt
+
+        def sync_stream():
+            chunks = []
+            for chunk in self._client.models.generate_content_stream(
+                model=self.model,
+                config=config,
+                contents=message,
+            ):
+                text = chunk.text if hasattr(chunk, 'text') else ""
+                if text:
+                    chunks.append(text)
+            return chunks
+
+        loop = asyncio.get_event_loop()
+        chunks = await loop.run_in_executor(None, sync_stream)
+        for chunk in chunks:
+            yield chunk
     
     async def ainvoke(self, messages, **kwargs) -> LLMResponse:
         """LangChain 호환 비동기 호출 (메인 클래스에 추가)"""
@@ -335,22 +408,217 @@ class LLMClient:
             else:
                 formatted_messages.append(msg)
         
-        try:
-            if self.provider == "openai":
-                return await self._call_openai(formatted_messages, **kwargs)
-            elif self.provider == "google":
-                return await self._call_google(formatted_messages, **kwargs)
-            elif self.provider == "anthropic":
-                return await self._call_anthropic(formatted_messages, **kwargs)
-            elif self.provider == "ollama":
-                return await self._call_ollama(formatted_messages, **kwargs)
-            else:
-                raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
-                
-        except Exception as e:
-            logger.error(f"LLM 호출 실패: {e}")
-            raise
+        import asyncio as _aio
+
+        max_retries = kwargs.pop("_max_retries", 2)
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                if self.provider == "openai":
+                    return await self._call_openai(formatted_messages, **kwargs)
+                elif self.provider == "google":
+                    return await self._call_google(formatted_messages, **kwargs)
+                elif self.provider == "anthropic":
+                    return await self._call_anthropic(formatted_messages, **kwargs)
+                elif self.provider == "ollama":
+                    return await self._call_ollama(formatted_messages, **kwargs)
+                else:
+                    raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
+
+            except (ValueError, TypeError, NotImplementedError) as e:
+                raise  # Non-retryable
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = min(1.0 * (2 ** attempt), 5.0)
+                    logger.debug(f"LLM retry {attempt+1}/{max_retries}: {type(e).__name__} (delay={delay:.1f}s)")
+                    await _aio.sleep(delay)
+                    continue
+                logger.error(f"LLM 호출 실패 ({max_retries+1}회 시도): {e}")
+                raise
     
+    async def invoke_with_tools(
+        self,
+        messages: List[Union[LLMMessage, Dict[str, str]]],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """LLM 호출 with function calling (도구 사용).
+
+        Args:
+            messages: 대화 메시지 리스트
+            tools: 도구 정의 리스트. 각 도구는:
+                {
+                    "name": "calculator",
+                    "description": "수학 계산을 수행합니다",
+                    "parameters": {
+                        "expression": {"type": "string", "description": "계산할 수식"}
+                    }
+                }
+
+        Returns:
+            LLMResponse — content에 텍스트, tool_calls에 호출 요청
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        formatted = [LLMMessage(**m) if isinstance(m, dict) else m for m in messages]
+
+        if self.provider == "google":
+            return await self._call_google_with_tools(formatted, tools, **kwargs)
+        else:
+            # Non-Google: 도구 설명을 시스템 프롬프트에 포함하는 폴백
+            return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+
+    async def _call_google_with_tools(
+        self,
+        messages: List[LLMMessage],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """Google Gemini function calling."""
+        import asyncio
+        from google.genai import types
+
+        system_instruction = None
+        contents = []
+        for msg in messages:
+            if msg.role == "system":
+                system_instruction = msg.content
+            elif msg.role == "user":
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=msg.content)],
+                ))
+            elif msg.role == "assistant":
+                contents.append(types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text=msg.content)],
+                ))
+            elif msg.role == "tool":
+                # Tool result injection
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=f"[Tool Result] {msg.content}")],
+                ))
+
+        # Convert tool definitions to Gemini function declarations
+        function_declarations = []
+        for tool in tools:
+            params = tool.get("parameters", {})
+            properties = {}
+            required = []
+            for pname, pdef in params.items():
+                properties[pname] = types.Schema(
+                    type=pdef.get("type", "STRING").upper(),
+                    description=pdef.get("description", ""),
+                )
+                if pdef.get("required", True):
+                    required.append(pname)
+
+            function_declarations.append(types.FunctionDeclaration(
+                name=tool["name"],
+                description=tool.get("description", ""),
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties=properties,
+                    required=required,
+                ) if properties else None,
+            ))
+
+        config = types.GenerateContentConfig(
+            temperature=kwargs.get("temperature", self.temperature),
+            max_output_tokens=kwargs.get("max_tokens", self.max_tokens) or 4096,
+            tools=[types.Tool(function_declarations=function_declarations)],
+        )
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        def sync_call():
+            return self._client.models.generate_content(
+                model=self.model,
+                config=config,
+                contents=contents if contents else "Hello",
+            )
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, sync_call)
+
+        # Parse response — check for function calls
+        tool_calls = []
+        text_content = ""
+
+        if hasattr(response, 'candidates') and response.candidates:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'function_call') and part.function_call:
+                    fc = part.function_call
+                    tool_calls.append(ToolCall(
+                        name=fc.name,
+                        args=dict(fc.args) if fc.args else {},
+                        id=fc.name,
+                    ))
+                elif hasattr(part, 'text') and part.text:
+                    text_content += part.text
+
+        if not text_content and hasattr(response, 'text'):
+            text_content = response.text or ""
+
+        return LLMResponse(
+            content=text_content,
+            provider=self.provider,
+            model=self.model,
+            tool_calls=tool_calls if tool_calls else None,
+        )
+
+    async def _call_with_tools_fallback(
+        self,
+        messages: List[LLMMessage],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """Non-Google providers: embed tool descriptions in system prompt."""
+        import json
+
+        tools_desc = "\n".join([
+            f"- {t['name']}: {t.get('description', '')} "
+            f"(params: {json.dumps(t.get('parameters', {}), ensure_ascii=False)})"
+            for t in tools
+        ])
+
+        tool_prompt = (
+            f"\n\nAvailable tools:\n{tools_desc}\n\n"
+            f"To use a tool, respond with ONLY this JSON:\n"
+            f'{{"tool_call": {{"name": "tool_name", "args": {{"param": "value"}}}}}}\n'
+            f"If no tool is needed, respond normally."
+        )
+
+        # Inject into system message
+        for msg in messages:
+            if msg.role == "system":
+                msg.content += tool_prompt
+                break
+        else:
+            messages.insert(0, LLMMessage(role="system", content=tool_prompt))
+
+        response = await self.invoke_messages(messages, **kwargs)
+
+        # Parse tool_call from JSON response
+        import re
+        tc_match = re.search(r'\{"tool_call":\s*\{.*?\}\}', response.content, re.DOTALL)
+        if tc_match:
+            try:
+                tc_data = json.loads(tc_match.group())["tool_call"]
+                response.tool_calls = [ToolCall(
+                    name=tc_data["name"],
+                    args=tc_data.get("args", {}),
+                )]
+                response.content = ""  # Tool call, no text
+            except Exception:
+                pass
+
+        return response
+
     async def _call_openai(self, messages: List[LLMMessage], **kwargs) -> LLMResponse:
         """OpenAI API 호출 (직접 API 사용)"""
         

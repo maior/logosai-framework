@@ -47,8 +47,8 @@ except ImportError as e:
 
 # === LLM Client — promoted to top-level (v0.9.0) ===
 try:
-    from .utils.llm_client import LLMClient, LLMResponse, LLMMessage, create_llm_client, quick_llm
-    __all__ += ["LLMClient", "LLMResponse", "LLMMessage", "create_llm_client", "quick_llm"]
+    from .utils.llm_client import LLMClient, LLMResponse, LLMMessage, ToolCall, create_llm_client, quick_llm
+    __all__ += ["LLMClient", "LLMResponse", "LLMMessage", "ToolCall", "create_llm_client", "quick_llm"]
 except ImportError as e:
     _logger.debug("LLMClient not available: %s", e)
 

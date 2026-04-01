@@ -226,16 +226,31 @@ class SimpleAgent(LogosAIAgent):
         """
         Call LLM and return content string.
 
+        If tools are registered (via register_tool/register_builtin_tools),
+        automatically uses tool calling — agent code doesn't need to change.
+
         Args:
             prompt: User prompt
             system_prompt: Optional system prompt
-            **kwargs: Extra params passed to LLMClient.invoke_messages()
+            **kwargs: Extra params passed to LLMClient
 
         Returns:
             Response content as string
         """
         await self._ensure_llm()
 
+        # Auto tool use: if tools registered, use run_with_tools transparently
+        if self.has_tools and not kwargs.get("_no_tools"):
+            result = await self.run_with_tools(
+                prompt,
+                tools=self._tools,
+                tool_executors=self._tool_executors,
+                system_prompt=system_prompt or "",
+                max_iterations=3,
+            )
+            return result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
+
+        # Standard LLM call (no tools)
         if system_prompt:
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -262,8 +277,103 @@ class SimpleAgent(LogosAIAgent):
         """
         from .utils.text_utils import parse_llm_json
 
-        content = await self.ask_llm(prompt, system_prompt=system_prompt, **kwargs)
+        # Try with JSON re-prompting (auto-retry if LLM returns non-JSON)
+        try:
+            from .utils.retry import retry_llm_json
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            content = await retry_llm_json(self.llm_client, messages, max_retries=2, **kwargs)
+        except Exception:
+            # Fallback to standard ask_llm
+            content = await self.ask_llm(prompt, system_prompt=system_prompt, _no_tools=True, **kwargs)
+
         return parse_llm_json(content, fallback=fallback or {})
+
+    async def ask_llm_stream(self, prompt: str, system_prompt: str = None):
+        """Stream LLM response token by token.
+
+        Yields text chunks as they arrive.
+
+        Example:
+            async for chunk in self.ask_llm_stream("Tell me a story"):
+                print(chunk, end="")
+        """
+        await self._ensure_llm()
+        async for chunk in self.llm_client.invoke_stream(prompt, system_prompt=system_prompt):
+            yield chunk
+
+    async def ask_llm_structured(self, prompt: str, schema: type, system_prompt: str = None, max_retries: int = 2) -> Any:
+        """Call LLM and validate response against a Pydantic model.
+
+        Auto-generates JSON schema from model and enforces output format.
+        Retries with corrective prompting on validation failure.
+
+        Args:
+            prompt: User prompt
+            schema: Pydantic BaseModel class (e.g., MyResponseModel)
+            system_prompt: Optional system prompt
+            max_retries: Max validation retry attempts
+
+        Returns:
+            Validated Pydantic model instance
+
+        Example:
+            from pydantic import BaseModel
+            class WeatherResponse(BaseModel):
+                city: str
+                temperature: float
+                description: str
+
+            result = await self.ask_llm_structured("Seoul weather", WeatherResponse)
+            print(result.city, result.temperature)
+        """
+        import json
+        from .utils.text_utils import parse_llm_json
+
+        # Generate JSON schema from Pydantic model
+        json_schema = schema.model_json_schema() if hasattr(schema, 'model_json_schema') else {}
+        schema_str = json.dumps(json_schema, indent=2, ensure_ascii=False)
+
+        full_system = (system_prompt or "") + (
+            f"\n\nYou MUST respond with valid JSON matching this schema:\n{schema_str}\n"
+            f"Respond with JSON only, no markdown code blocks."
+        )
+
+        for attempt in range(max_retries + 1):
+            data = await self.ask_llm_json(prompt, system_prompt=full_system)
+
+            try:
+                return schema(**data)  # Validate with Pydantic
+            except Exception as e:
+                if attempt < max_retries:
+                    _logger.debug(f"Structured output validation failed (attempt {attempt+1}): {e}")
+                    full_system += f"\n\nPrevious response was invalid: {str(e)[:200]}. Fix and respond again."
+                    continue
+                _logger.warning(f"Structured output failed after {max_retries+1} attempts: {e}")
+                return schema(**{k: None for k in schema.model_fields}) if hasattr(schema, 'model_fields') else data
+
+    async def ask_with_tools(self, query: str, system_prompt: str = None) -> str:
+        """Ask LLM with registered tools (auto-uses agent's tools).
+
+        Shorthand for run_with_tools() using this agent's registered tools.
+        Returns answer string (not AgentResponse).
+
+        Example:
+            self.register_builtin_tools()  # in __init__
+            answer = await self.ask_with_tools("144의 제곱근은?")
+        """
+        if not self.has_tools:
+            return await self.ask_llm(query, system_prompt=system_prompt)
+
+        result = await self.run_with_tools(
+            query,
+            tools=self._tools,
+            tool_executors=self._tool_executors,
+            system_prompt=system_prompt or f"You are {self.name}. Use tools when needed.",
+        )
+        return result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
 
     # ─── Status publishing ──────────────────────────────
 
