@@ -34,6 +34,21 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+def _get_default_model():
+    try:
+        from ..config.llm_defaults import get_default_model
+        return get_default_model()
+    except Exception:
+        return "gemini-2.5-flash-lite"
+
+def _get_default_provider():
+    try:
+        from ..config.llm_defaults import get_default_provider
+        return get_default_provider()
+    except Exception:
+        return "google"
+
+
 # 프로바이더별 라이브러리 임포트 (선택적)
 _PROVIDERS_AVAILABLE = {}
 
@@ -196,9 +211,9 @@ class LLMClient:
             if self.provider == "openai":
                 self.model = "gpt-4.1-mini"
             elif self.provider == "google":
-                self.model = "gemini-2.5-flash-lite"
+                self.model = _get_default_model()
             else:
-                self.model = "gemini-2.5-flash-lite"
+                self.model = _get_default_model()
         
         if not self.api_key:
             import os
@@ -223,7 +238,7 @@ class LLMClient:
             
             # 모델 설정
             if not self.model:
-                self.model = provider_settings.get("default_model") or default_settings.get("default_model", "gemini-2.5-flash-lite")
+                self.model = provider_settings.get("default_model") or default_settings.get("default_model", _get_default_model())
             
             # API 키 설정
             if not self.api_key:
@@ -395,11 +410,14 @@ class LLMClient:
             # 단일 메시지인 경우
             return await self.invoke(str(messages), **kwargs)
     
+    # Observability: metrics callback (set by ACP server)
+    _metrics_callback = None
+
     async def invoke_messages(self, messages: List[Union[LLMMessage, Dict[str, str]]], **kwargs) -> LLMResponse:
         """메시지 리스트로 LLM 호출"""
         if not self._initialized:
             await self.initialize()
-        
+
         # 메시지 형식 통일
         formatted_messages = []
         for msg in messages:
@@ -407,24 +425,89 @@ class LLMClient:
                 formatted_messages.append(LLMMessage(**msg))
             else:
                 formatted_messages.append(msg)
-        
+
         import asyncio as _aio
+        import time as _time
+
+        # Guardrails: rate limit + call counter
+        try:
+            from .guardrails import get_rate_limiter, get_request_counter
+            await get_rate_limiter().acquire()
+            get_request_counter().increment()
+        except ImportError:
+            pass  # guardrails not available
+        except Exception as guard_err:
+            # LLMCallLimitExceeded → propagate
+            if "limit exceeded" in str(guard_err).lower():
+                raise
+            logger.debug(f"Guardrail check: {guard_err}")
 
         max_retries = kwargs.pop("_max_retries", 2)
         last_error = None
+        _start_time = _time.time()
+
+        # Extract prompt preview for metrics
+        _prompt_preview = ""
+        for msg in formatted_messages:
+            if msg.role == "user":
+                _prompt_preview = msg.content[:200] if msg.content else ""
+                break
 
         for attempt in range(max_retries + 1):
             try:
                 if self.provider == "openai":
-                    return await self._call_openai(formatted_messages, **kwargs)
+                    response = await self._call_openai(formatted_messages, **kwargs)
                 elif self.provider == "google":
-                    return await self._call_google(formatted_messages, **kwargs)
+                    response = await self._call_google(formatted_messages, **kwargs)
                 elif self.provider == "anthropic":
-                    return await self._call_anthropic(formatted_messages, **kwargs)
+                    response = await self._call_anthropic(formatted_messages, **kwargs)
                 elif self.provider == "ollama":
-                    return await self._call_ollama(formatted_messages, **kwargs)
+                    response = await self._call_ollama(formatted_messages, **kwargs)
                 else:
                     raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
+
+                # Observability: report metrics
+                _duration = (_time.time() - _start_time) * 1000
+                if LLMClient._metrics_callback:
+                    try:
+                        tokens = self._extract_token_usage(response)
+                        LLMClient._metrics_callback({
+                            "model": self.model,
+                            "provider": self.provider,
+                            "input_tokens": tokens.get("input", 0),
+                            "output_tokens": tokens.get("output", 0),
+                            "duration_ms": _duration,
+                            "success": True,
+                            "prompt_preview": _prompt_preview,
+                        })
+                    except Exception:
+                        pass  # Never block on metrics
+
+                # Tracing: LLM 호출 Span (이미 측정된 _duration 사용)
+                try:
+                    from logosai.utils.trace_span import TraceSpan
+                    tokens = self._extract_token_usage(response)
+                    _llm_span = TraceSpan.start(
+                        name=f"llm.{self.model}",
+                        agent_id="",
+                        input_text=_prompt_preview,
+                    )
+                    # start_time을 실제 호출 시작으로 보정
+                    _llm_span.start_time = _start_time
+                    _llm_span.end(
+                        success=True,
+                        output=response.content[:200] if hasattr(response, 'content') else "",
+                        metadata={
+                            "model": self.model,
+                            "provider": self.provider,
+                            "input_tokens": tokens.get("input", 0),
+                            "output_tokens": tokens.get("output", 0),
+                        },
+                    )
+                except Exception:
+                    pass
+
+                return response
 
             except (ValueError, TypeError, NotImplementedError) as e:
                 raise  # Non-retryable
@@ -817,6 +900,48 @@ class LLMClient:
             
             raise
     
+    @staticmethod
+    def _extract_token_usage(response: LLMResponse) -> Dict[str, int]:
+        """LLM 응답에서 토큰 사용량 추출.
+
+        Google Gemini: response.raw_response.usage_metadata
+        OpenAI: response.raw_response.usage
+        Anthropic: response.raw_response.usage
+        """
+        result = {"input": 0, "output": 0}
+        try:
+            raw = response.raw_response if hasattr(response, 'raw_response') else None
+            if raw is None:
+                return result
+
+            # Google Gemini
+            if hasattr(raw, 'usage_metadata'):
+                um = raw.usage_metadata
+                result["input"] = getattr(um, 'prompt_token_count', 0) or 0
+                result["output"] = getattr(um, 'candidates_token_count', 0) or 0
+                return result
+
+            # OpenAI / Anthropic
+            if hasattr(raw, 'usage'):
+                usage = raw.usage
+                if hasattr(usage, 'prompt_tokens'):
+                    result["input"] = usage.prompt_tokens or 0
+                    result["output"] = usage.completion_tokens or 0
+                elif hasattr(usage, 'input_tokens'):
+                    result["input"] = usage.input_tokens or 0
+                    result["output"] = usage.output_tokens or 0
+                return result
+
+            # Dict fallback
+            if isinstance(raw, dict):
+                usage = raw.get('usage', {})
+                result["input"] = usage.get('prompt_tokens', usage.get('input_tokens', 0))
+                result["output"] = usage.get('completion_tokens', usage.get('output_tokens', 0))
+
+        except Exception:
+            pass
+        return result
+
     async def _call_anthropic(self, messages: List[LLMMessage], **kwargs) -> LLMResponse:
         """Anthropic API 호출"""
         from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -878,7 +1003,7 @@ class LLMClient:
         return cls(provider="openai", model=model, temperature=temperature, **kwargs)
     
     @classmethod
-    def create_google(cls, model: str = "gemini-2.5-flash-lite", temperature: float = 0.7, **kwargs) -> 'LLMClient':
+    def create_google(cls, model: str = None, temperature: float = 0.7, **kwargs) -> 'LLMClient':
         """Google 클라이언트 생성 단축 메서드"""
         return cls(provider="google", model=model, temperature=temperature, **kwargs)
     
@@ -923,8 +1048,8 @@ def register_google_provider(api_key_env: str = "GOOGLE_API_KEY"):
     return register_provider(
         provider_name="google",
         api_key_env=api_key_env,
-        default_model="gemini-2.5-flash-lite",
-        fallback_model="gemini-2.5-flash-lite"
+        default_model=_get_default_model(),
+        fallback_model=_get_default_model()
     )
 
 
@@ -956,7 +1081,7 @@ def register_ollama_provider():
 async def quick_llm(
     prompt: str,
     provider: str = "google",
-    model: str = "gemini-2.5-flash-lite",
+    model: str = None,
     temperature: float = 0.7,
     system_prompt: Optional[str] = None,
     max_tokens: int = 4000,

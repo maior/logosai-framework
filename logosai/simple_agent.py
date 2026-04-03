@@ -60,9 +60,9 @@ class SimpleAgent(LogosAIAgent):
     agent_description: str = ""
     agent_type_value: Union[AgentType, str] = AgentType.CUSTOM
 
-    # LLM configuration
-    llm_provider: str = "google"
-    llm_model: str = "gemini-2.5-flash-lite"
+    # LLM configuration (reads from ~/.logosai/config.json → env → fallback)
+    llm_provider: str = None  # Set in __init__ from config
+    llm_model: str = None     # Set in __init__ from config
     llm_temperature: float = 0.7
     llm_max_tokens: int = 4000
 
@@ -72,6 +72,18 @@ class SimpleAgent(LogosAIAgent):
         If config is None, auto-creates AgentConfig from class attributes.
         If config is provided (e.g. by ACP agent_loader), uses that instead.
         """
+        # Load defaults from config.json if not explicitly set
+        if self.llm_provider is None or self.llm_model is None:
+            try:
+                from .config.llm_defaults import get_default_provider, get_default_model
+                if self.llm_provider is None:
+                    self.llm_provider = get_default_provider()
+                if self.llm_model is None:
+                    self.llm_model = get_default_model()
+            except Exception:
+                self.llm_provider = self.llm_provider or "google"
+                self.llm_model = self.llm_model or "gemini-2.5-flash-lite"
+
         if config is None:
             config = AgentConfig(
                 name=self.agent_name,
@@ -404,7 +416,7 @@ def agent(
     description: str = "",
     agent_type: Union[AgentType, str] = AgentType.CUSTOM,
     provider: str = "google",
-    model: str = "gemini-2.5-flash-lite",
+    model: str = None,  # reads from ~/.logosai/config.json
     temperature: float = 0.7,
     max_tokens: int = 4000,
 ):
@@ -471,7 +483,7 @@ def create_simple_agent(
     handle_func: Callable,
     description: str = "",
     provider: str = "google",
-    model: str = "gemini-2.5-flash-lite",
+    model: str = None,  # reads from ~/.logosai/config.json
     temperature: float = 0.7,
     max_tokens: int = 4000,
     **kwargs,

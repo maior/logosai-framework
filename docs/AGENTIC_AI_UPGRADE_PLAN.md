@@ -25,6 +25,14 @@ LogosAI Agentic AI 프레임워크 업그레이드 **전체 완료**. 경쟁 프
 
 **LogosAI 고유 강점**: Self-Evolution, Desktop Agent, Browser Search — 다른 프레임워크에 없음.
 
+### 추가 완료 (2026-04-02)
+
+| 기능 | 설명 |
+|------|------|
+| **LLM 중앙 설정** | `~/.logosai/config.json` → 프레임워크 전체 자동 적용 (모델명, temperature 등). LLMClient 초기화 시 자동 로드. |
+| **모델 일괄 업데이트** | gemini-2.0 계열 → gemini-2.5-flash-lite 전체 마이그레이션 완료 |
+| **Goal Decomposition** | `plan()` + `plan_stream()` 구현 → Agent Engineering Phase A 완료 (별도 문서: `AGENT_ENGINEERING_PLAN.md`) |
+
 ## Phase 1: Tool-LLM 통합 루프
 
 ### 목표

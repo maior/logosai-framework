@@ -100,6 +100,10 @@ class LogosAIAgent:
 
         # Tool usage metrics
         self._tool_metrics: Dict[str, Dict] = {}  # tool_name → {calls, successes, failures}
+
+        # Stream callback for Human-in-the-Loop (SSE approval events)
+        # Injected by ACP server's sse_handlers at runtime
+        self._stream_callback = None
     
     def _should_enable_agentic(self) -> bool:
         """Determine whether to enable Agentic AI features"""
@@ -354,7 +358,8 @@ class LogosAIAgent:
         if not llm:
             try:
                 from .utils.llm_client import LLMClient
-                llm = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+                from .config.llm_defaults import get_default_provider, get_default_model
+                llm = LLMClient(provider=get_default_provider(), model=get_default_model())
                 await llm.initialize()
                 self._llm = llm
             except Exception as e:
@@ -451,6 +456,228 @@ class LogosAIAgent:
         )
 
     # ═══════════════════════════════════════════
+    # Goal Decomposition (Plan → Execute)
+    # ═══════════════════════════════════════════
+
+    async def plan(
+        self,
+        query: str,
+        tools: List[Dict] = None,
+        tool_executors: Dict[str, Any] = None,
+        system_prompt: str = "",
+        context: Optional[Dict[str, Any]] = None,
+    ) -> 'AgentResponse':
+        """Decompose a complex query into sub-goals and execute each.
+
+        For simple queries: runs as single step (no overhead).
+        For complex queries: breaks into sub-goals with dependencies,
+        executes in order, combines results.
+
+        Each sub-goal is executed via react() (with tools if available).
+
+        Args:
+            query: User query
+            tools: Tool definitions (optional)
+            tool_executors: Tool executors (optional)
+            system_prompt: System instruction
+            context: Additional context
+
+        Returns:
+            AgentResponse with combined results from all sub-goals
+
+        Example:
+            result = await agent.plan(
+                "Search Tesla and Apple earnings, compare, and write a report",
+                tools=BUILTIN_TOOLS, tool_executors=BUILTIN_EXECUTORS,
+            )
+        """
+        from .agent_types import AgentResponse, AgentResponseType
+        from .agentic.planner import plan_goal, execute_goal_tree
+
+        if not self.initialized:
+            await self.initialize()
+
+        llm = getattr(self, '_llm', None) or getattr(self, 'llm_client', None)
+
+        # Step 1: Decompose into goal tree
+        try:
+            tree = await plan_goal(query, llm=llm)
+        except Exception as e:
+            self.logger.warning(f"Plan failed, falling back to react: {e}")
+            return await self.react(query, tools, tool_executors, system_prompt, context=context)
+
+        num_goals = len(tree.root.sub_goals)
+        self.logger.info(f"Plan: {num_goals} goals for '{query[:40]}'")
+
+        # Step 2: If simple (1 goal), just use react directly
+        if num_goals <= 1:
+            return await self.react(query, tools, tool_executors, system_prompt, context=context)
+
+        # Step 3: Execute each sub-goal via react()
+        _tools = tools or self._tools
+        _executors = tool_executors or self._tool_executors
+
+        async def goal_executor(title, goal_context=None):
+            """Execute a single sub-goal using react()."""
+            # Build context from previous goal results
+            ctx_str = ""
+            if goal_context:
+                ctx_str = "\n".join([f"- {v[:100]}" for v in goal_context.values() if v])
+
+            sub_prompt = title
+            if ctx_str:
+                sub_prompt = f"{title}\n\nContext from previous steps:\n{ctx_str}"
+
+            result = await self.react(
+                sub_prompt,
+                tools=_tools if _tools else None,
+                tool_executors=_executors if _executors else None,
+                system_prompt=system_prompt,
+                max_steps=3,
+            )
+            return result.content.get("answer", str(result.content)) if isinstance(result.content, dict) else str(result.content)
+
+        await execute_goal_tree(tree, executor=goal_executor)
+
+        # Step 4: Combine results
+        results = tree.get_completed_results()
+        combined = "\n\n".join([
+            f"**{tree.get(gid).title}**:\n{result}"
+            for gid, result in results.items()
+            if gid != "root"
+        ])
+
+        # Step 5: Final synthesis (optional — let LLM combine)
+        if num_goals >= 3 and llm:
+            try:
+                synth = await asyncio.wait_for(llm.invoke(
+                    f"아래 단계별 결과를 종합하여 사용자의 원래 질문에 대한 최종 답변을 작성하세요.\n\n"
+                    f"원래 질문: {query}\n\n단계별 결과:\n{combined[:3000]}\n\n"
+                    f"종합적이고 정리된 최종 답변을 작성하세요."
+                ), timeout=15)
+                final = synth.content if hasattr(synth, 'content') else str(synth)
+            except Exception:
+                final = combined
+        else:
+            final = combined
+
+        return AgentResponse(
+            type=AgentResponseType.SUCCESS,
+            content={
+                "answer": final,
+                "goals": num_goals,
+                "progress": f"{tree.progress:.0%}",
+                "tree": tree.root.to_dict(),
+            },
+            message=f"Plan completed ({num_goals} goals)",
+        )
+
+    async def plan_stream(
+        self,
+        query: str,
+        tools: List[Dict] = None,
+        tool_executors: Dict[str, Any] = None,
+        system_prompt: str = "",
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        """Plan with real-time progress streaming.
+
+        Same as plan() but yields SSE events as each sub-goal executes.
+
+        Yields:
+            {"type": "plan_created", "data": {"goals": N, "tree": {...}}}
+            {"type": "goal_started", "data": {"goal_id": "g1", "title": "...", "progress": "0%"}}
+            {"type": "goal_completed", "data": {"goal_id": "g1", "result": "...", "progress": "33%"}}
+            {"type": "plan_completed", "data": {"answer": "...", "goals": N}}
+        """
+        from .agent_types import AgentResponse, AgentResponseType
+        from .agentic.planner import plan_goal, execute_goal_tree_stream
+        import time as _time
+
+        if not self.initialized:
+            await self.initialize()
+
+        llm = getattr(self, '_llm', None) or getattr(self, 'llm_client', None)
+
+        # Step 1: Decompose
+        try:
+            tree = await plan_goal(query, llm=llm)
+        except Exception as e:
+            yield {"type": "error", "data": {"error": f"Plan failed: {e}"}, "timestamp": _time.time()}
+            return
+
+        num_goals = len(tree.root.sub_goals)
+
+        # Emit plan_created
+        yield {
+            "type": "plan_created",
+            "data": {
+                "goals": num_goals,
+                "tree": tree.root.to_dict(),
+                "query": query[:100],
+            },
+            "timestamp": _time.time(),
+        }
+
+        # Simple query → react directly, emit as single step
+        if num_goals <= 1:
+            yield {"type": "goal_started", "data": {"goal_id": "g1", "title": query[:60], "progress": "0%"}, "timestamp": _time.time()}
+            result = await self.react(query, tools, tool_executors, system_prompt, context=context)
+            answer = result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
+            yield {"type": "goal_completed", "data": {"goal_id": "g1", "title": query[:60], "result": answer[:200], "progress": "100%"}, "timestamp": _time.time()}
+            yield {"type": "plan_completed", "data": {"answer": answer, "goals": 1}, "timestamp": _time.time()}
+            return
+
+        # Step 2: Execute with streaming
+        _tools = tools or self._tools
+        _executors = tool_executors or self._tool_executors
+
+        async def goal_executor(title, goal_context=None):
+            ctx_str = ""
+            if goal_context:
+                ctx_str = "\n".join([f"- {v[:100]}" for v in goal_context.values() if v])
+            sub_prompt = title
+            if ctx_str:
+                sub_prompt = f"{title}\n\nContext from previous steps:\n{ctx_str}"
+            result = await self.react(
+                sub_prompt,
+                tools=_tools if _tools else None,
+                tool_executors=_executors if _executors else None,
+                system_prompt=system_prompt,
+                max_steps=3,
+            )
+            return result.content.get("answer", str(result.content)) if isinstance(result.content, dict) else str(result.content)
+
+        # Stream execution events
+        async for event in execute_goal_tree_stream(tree, executor=goal_executor):
+            yield {"type": event["event"], "data": event["data"], "timestamp": _time.time()}
+
+        # Step 3: Final synthesis
+        results = tree.get_completed_results()
+        combined = "\n\n".join([
+            f"**{tree.get(gid).title}**:\n{result}"
+            for gid, result in results.items() if gid != "root"
+        ])
+
+        if num_goals >= 3 and llm:
+            try:
+                synth = await asyncio.wait_for(llm.invoke(
+                    f"아래 단계별 결과를 종합하여 원래 질문에 대한 최종 답변을 작성하세요.\n\n"
+                    f"질문: {query}\n\n결과:\n{combined[:3000]}\n\n종합 답변 작성."
+                ), timeout=15)
+                final = synth.content if hasattr(synth, 'content') else str(synth)
+            except Exception:
+                final = combined
+        else:
+            final = combined
+
+        yield {
+            "type": "plan_completed",
+            "data": {"answer": final, "goals": num_goals, "progress": f"{tree.progress:.0%}"},
+            "timestamp": _time.time(),
+        }
+
+    # ═══════════════════════════════════════════
     # ReAct Loop (Think → Act → Observe)
     # ═══════════════════════════════════════════
 
@@ -496,7 +723,8 @@ class LogosAIAgent:
         if not llm:
             try:
                 from .utils.llm_client import LLMClient
-                llm = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+                from .config.llm_defaults import get_default_provider, get_default_model
+                llm = LLMClient(provider=get_default_provider(), model=get_default_model())
                 await llm.initialize()
                 self._llm = llm
             except Exception as e:
@@ -871,19 +1099,35 @@ Always think step by step. Never skip the Thought step."""
             caller_id = getattr(self, 'id', self.__class__.__name__)
             self.logger.info(f"call_agent: {caller_id} → {agent_id}: {query[:50]}")
 
+            # Tracing: 자식 Span 생성
+            _span = None
+            try:
+                from logosai.utils.trace_span import TraceSpan
+                _span = TraceSpan.start(
+                    name=f"call_agent({agent_id})",
+                    agent_id=agent_id,
+                    input_text=query[:200],
+                )
+            except Exception:
+                pass
+
             result = await target.process(query, context or {})
 
             # Normalize response
             if hasattr(result, 'content'):
                 answer = result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
+                if _span: _span.end(success=True, output=answer[:200])
                 return {"success": True, "answer": answer, "agent_id": agent_id}
             elif isinstance(result, dict):
+                if _span: _span.end(success=True, output=str(result.get("answer", ""))[:200])
                 return {"success": True, "agent_id": agent_id, **result}
             else:
+                if _span: _span.end(success=True, output=str(result)[:200])
                 return {"success": True, "answer": str(result), "agent_id": agent_id}
 
         except Exception as e:
             self.logger.error(f"call_agent to {agent_id} failed: {e}")
+            if _span: _span.end(success=False, output=str(e)[:200])
             return {"success": False, "answer": f"에이전트 호출 실패: {e}", "agent_id": agent_id}
 
     def available_agents(self) -> List[str]:
@@ -1008,6 +1252,117 @@ Always think step by step. Never skip the Thought step."""
                 r = await self.call_agent(t["agent_id"], t["query"], t.get("context"))
                 results.append(r)
             return results
+
+    # ═══════════════════════════════════════════
+    # Human-in-the-Loop (SSE Bidirectional)
+    # ═══════════════════════════════════════════
+
+    async def request_approval(
+        self,
+        action: str,
+        description: str,
+        details: Optional[Dict[str, Any]] = None,
+        timeout: int = 30,
+    ) -> bool:
+        """Request user approval before performing a risky action.
+
+        Sends an approval_required SSE event to the frontend and waits
+        for the user's response (approve/reject) via REST callback.
+
+        Args:
+            action: Action identifier (e.g., "send_email", "delete_file")
+            description: Human-readable description of what will happen
+            details: Preview data (e.g., email recipient, file path)
+            timeout: Seconds to wait for response (default 30)
+
+        Returns:
+            True if approved, False if rejected/timeout/cancelled.
+
+        Usage:
+            approved = await self.request_approval(
+                action="send_email",
+                description="Send report to user@example.com",
+                details={"to": "user@example.com", "subject": "Report"},
+            )
+            if approved:
+                await self._send_email(...)
+            else:
+                return "사용자가 취소했습니다"
+        """
+        from .agentic.approval import ApprovalManager, InteractionRequest, InteractionType, ApprovalStatus
+
+        interaction = InteractionRequest(
+            type=InteractionType.APPROVAL,
+            action=action,
+            description=description,
+            details=details or {},
+            timeout_seconds=timeout,
+            agent_id=self.id,
+        )
+
+        # If there's a streaming callback, emit the SSE event
+        if hasattr(self, '_stream_callback') and self._stream_callback:
+            try:
+                await self._stream_callback(interaction.to_sse_event())
+            except Exception as e:
+                self.logger.warning(f"Failed to send approval SSE event: {e}")
+
+        manager = ApprovalManager.get()
+        result = await manager.request(interaction)
+        return result.status == ApprovalStatus.APPROVED
+
+    async def ask_user(
+        self,
+        question: str,
+        options: Optional[List[str]] = None,
+        timeout: int = 60,
+    ) -> Optional[str]:
+        """Ask the user a question and wait for their response.
+
+        For CHOICE type (options provided): user selects from list.
+        For INPUT type (no options): user types free text.
+
+        Args:
+            question: The question to ask
+            options: List of choices (None = free text input)
+            timeout: Seconds to wait (default 60)
+
+        Returns:
+            User's response string, or None if timeout/cancelled.
+
+        Usage:
+            # Choice
+            lang = await self.ask_user(
+                "어떤 언어로 번역할까요?",
+                options=["영어", "일본어", "중국어"]
+            )
+
+            # Free text
+            details = await self.ask_user("추가 정보를 입력해주세요")
+        """
+        from .agentic.approval import ApprovalManager, InteractionRequest, InteractionType, ApprovalStatus
+
+        interaction = InteractionRequest(
+            type=InteractionType.CHOICE if options else InteractionType.INPUT,
+            action="ask_user",
+            description=question,
+            options=options or [],
+            timeout_seconds=timeout,
+            agent_id=self.id,
+        )
+
+        if hasattr(self, '_stream_callback') and self._stream_callback:
+            try:
+                await self._stream_callback(interaction.to_sse_event())
+            except Exception as e:
+                self.logger.warning(f"Failed to send ask_user SSE event: {e}")
+
+        manager = ApprovalManager.get()
+        result = await manager.request(interaction)
+
+        if result.status == ApprovalStatus.APPROVED:
+            return result.response
+        return None
 
     # ═══════════════════════════════════════════
     # L3: Real-time Collaboration
@@ -1243,7 +1598,8 @@ Always think step by step. Never skip the Thought step."""
             else:
                 try:
                     from logosai.utils.llm_client import LLMClient
-                    llm = LLMClient(provider="google", model="gemini-2.5-flash-lite")
+                    from .config.llm_defaults import get_default_provider, get_default_model
+                    llm = LLMClient(provider=get_default_provider(), model=get_default_model())
                     await llm.initialize()
                 except Exception:
                     return -1.0
