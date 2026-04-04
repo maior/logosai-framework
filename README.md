@@ -4,9 +4,9 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Personal AI agent framework — build agents in 4 lines, no server required.**
+**Build AI agents in 4 lines. Orchestrate 56+ agents. Self-evolving. Observable.**
 
-LogosAI is a Python framework for building, orchestrating, and evolving AI agents on your own machine. SQLite for storage, multi-provider LLM support, and a CLI to get started in 30 seconds.
+LogosAI is a Python framework for building, orchestrating, and evolving AI agents. Create a single agent with minimal code, or build a multi-agent system where agents collaborate, debate, learn from each other, and improve themselves autonomously — with full observability via LogosPulse.
 
 ```bash
 pip install logosai
@@ -24,23 +24,25 @@ pip install logosai
 
 ## Why LogosAI?
 
-| | LogosAI | LangGraph | CrewAI | OpenAI SDK |
-|---|---------|-----------|--------|------------|
-| **Agent creation** | 4 lines | 30+ lines | 15+ lines | 10+ lines |
-| **Tool Use (function calling)** | ✅ Auto-inject | ✅ | ✅ | ✅ |
-| **ReAct (Think→Act→Observe)** | ✅ `react()` | ✅ | ✅ | ✅ |
-| **Persistent Memory** | ✅ PostgreSQL/SQLite | ✅ | ✅ | Limited |
-| **LLM Streaming** | ✅ Token-by-token | ✅ | — | ✅ |
-| **Structured Output** | ✅ Pydantic schema | ✅ | ✅ | ✅ |
-| **Error Recovery** | ✅ @retry + re-prompt | ✅ | ✅ | ✅ |
-| **Context Management** | ✅ Auto-pruning | ✅ | — | ✅ |
-| **Self-evolution** | ✅ Auto-fix + deploy | — | — | — |
-| **Desktop control** | ✅ Gmail, KakaoTalk, Notion | — | — | — |
-| **Browser search** | ✅ Real Chrome | — | — | — |
-| **Agent-to-agent** | ✅ `call_agent()` built-in | Manual | Manual | — |
-| **Agent debate** | ✅ 5-phase voting | — | — | — |
-| **Sub-agent spawn** | ✅ `spawn_agent()` | ✅ | ✅ | — |
-| **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric | OpenAI only |
+| | LogosAI | LangGraph | CrewAI | OpenAI SDK | OpenClaw | Claude Agent SDK | Google ADK |
+|---|---------|-----------|--------|------------|----------|-----------------|------------|
+| **Agent creation** | 4 lines | 30+ lines | 15+ lines | 10+ lines | — | 10+ lines | 10+ lines |
+| **Tool Use (function calling)** | ✅ Auto-inject | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **ReAct (Think→Act→Observe)** | ✅ `react()` | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+| **Persistent Memory** | ✅ PostgreSQL/SQLite + embedding search | ✅ | ✅ | Limited | Local | Limited | Limited |
+| **LLM Streaming** | ✅ Token-by-token | ✅ | — | ✅ | ✅ | ✅ | ✅ |
+| **Structured Output** | ✅ Pydantic schema | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+| **Error Recovery** | ✅ @retry + re-prompt | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+| **Self-evolution** | ✅ Auto-fix + deploy | — | — | — | — | — | — |
+| **Observability** | ✅ LogosPulse (OTel-style traces) | Partial | — | — | — | — | ✅ OTel native |
+| **Desktop control** | ✅ Gmail, KakaoTalk, Notion | — | — | — | ✅ 20+ channels | — | — |
+| **Browser search** | ✅ Real Chrome | — | — | — | ✅ | — | — |
+| **Agent-to-agent** | ✅ `call_agent()` built-in | Manual | Manual | — | — | ✅ | ✅ |
+| **Agent debate** | ✅ 5-phase voting | — | — | — | — | — | — |
+| **Sub-agent spawn** | ✅ `spawn_agent()` | ✅ | ✅ | — | — | ✅ | ✅ |
+| **Mixin architecture** | ✅ Composable mixins | — | — | — | — | — | — |
+| **Ontology-based routing** | ✅ GNN+RL+KG | — | — | — | — | — | — |
+| **LLM providers** | OpenAI, Anthropic, Gemini, Ollama | OpenAI-centric | OpenAI-centric | OpenAI only | Multiple | Claude only | Google-centric |
 
 ## Quick Start
 
@@ -127,29 +129,10 @@ Supported: `openai`, `anthropic`, `google` (Gemini), `ollama`
 ## Installation
 
 ```bash
-pip install logosai          # Core framework (zero dependencies beyond aiohttp, pydantic)
+pip install logosai          # Core framework
 pip install logosai[llm]     # + LLM providers (OpenAI, Anthropic, Gemini)
-pip install logosai[desktop] # + Desktop automation (macOS/Linux)
-pip install logosai[all]     # Everything
+pip install logosai[all]     # + All optional dependencies
 ```
-
-### Personal Setup (30 seconds)
-
-```bash
-# 1. Install
-pip install logosai[llm]
-
-# 2. Initialize (creates ~/.logosai/ with SQLite database)
-logosai init
-
-# 3. Set your API key
-export GOOGLE_API_KEY=your-key   # or OPENAI_API_KEY, ANTHROPIC_API_KEY
-
-# 4. Check
-logosai status
-```
-
-No PostgreSQL. No Docker. No server setup. Just Python + API key.
 
 ## Features
 
@@ -158,7 +141,7 @@ No PostgreSQL. No Docker. No server setup. Just Python + API key.
 - **`SimpleAgent`** — Class-based with `ask_llm()` helper
 - **`quick_llm()`** — One-shot LLM call
 - **`LLMClient`** — Unified multi-provider client (OpenAI, Anthropic, Gemini, Ollama)
-- **`LogosAIAgent`** — Full-featured base with async lifecycle
+- **`LogosAIAgent`** — Full-featured base with async lifecycle and mixin composition
 
 ### Multi-Agent Orchestration
 - **SimpleACPServer** — Host agents with JSON-RPC + SSE streaming
@@ -196,15 +179,23 @@ await self.share_learning(
 learnings = await self.get_learnings(tags=["gmail"])
 ```
 
-### Agentic AI (NEW v0.12)
+### Agentic AI (v0.12) — Mixin Architecture
 
-Agents autonomously use tools, reason step-by-step, and remember past interactions.
+`LogosAIAgent` is built from five composable mixins, each independently usable:
+
+| Mixin | File | Capabilities |
+|-------|------|--------------|
+| **ToolUseMixin** | `mixins/tool_use.py` | `register_tool()`, `run_with_tools()`, `register_tool_object()` |
+| **MemoryMixin** | `mixins/memory.py` | `memorize()`, `recall()`, `forget()` — embedding hybrid search |
+| **ReactMixin** | `mixins/react.py` | `react()` — Think→Act→Observe loop |
+| **PlanningMixin** | `mixins/planning.py` | `plan()`, `plan_stream()` — Goal decomposition tree |
+| **MultiAgentMixin** | `mixins/multi_agent.py` | `call_agent()`, `delegate()`, `spawn_agent()` |
 
 ```python
-# Tool Use — agent autonomously selects and uses tools
-agent.register_builtin_tools()  # calculator, datetime, text
-answer = await agent.ask_llm("What's 2^20?")
-# → LLM calls calculator(2**20) → "1,048,576"
+# Tool Use — 3 ways to register tools
+agent.register_tool("calc", "Calculator", calc_func, params)          # existing
+agent.register_tool_object(Tool(name="calc", category="math", ...))   # new: Tool dataclass
+agent.register_tool_object(@tool_decorator(...))                       # new: auto-parse signature
 
 # ReAct — Think → Act → Observe loop
 result = await agent.react(
@@ -217,9 +208,16 @@ result = await agent.react(
 # → Action: calculator(14693 * 1380) → ₩20,276,340
 # → Final Answer: "₩20,276,340"
 
-# Persistent Memory — agents remember across sessions
+# Persistent Memory — embedding hybrid search
 await agent.memorize("user_pref", "User prefers Korean", importance=0.9)
 memories = await agent.recall("user")  # Auto-injected into LLM context
+# Semantic: query "수도 날씨" finds memory "서울 기온" via cosine similarity
+
+# Goal Decomposition
+plan = await agent.plan("Build a web scraper for news articles")
+# → Sub-goals: fetch → parse → store → deduplicate → schedule
+async for step in agent.plan_stream("Build a web scraper"):
+    print(step)  # Streams decomposition steps in real-time
 
 # Structured Output — enforce JSON schema
 from pydantic import BaseModel
@@ -242,7 +240,29 @@ async for chunk in agent.ask_llm_stream("Tell me about AI"):
     print(chunk, end="")
 ```
 
-**Capabilities**: Tool Use · ReAct · Memory · Streaming · Structured Output · Error Recovery · Context Management
+**Capabilities**: Tool Use · ReAct · Memory (embedding search) · Goal Decomposition · Streaming · Structured Output · Error Recovery · Context Management
+
+### Observability — LogosPulse
+
+OpenTelemetry-style tracing and metrics for every agent execution:
+
+```
+Root Span (agent.process)
+├── LLM Span (llm.gemini-2.5-flash-lite) — intent extraction      ~120ms
+└── LLM Span (llm.gemini-2.5-flash-lite) — response generation    ~1.8s
+```
+
+```python
+from logosai.utils.pulse_client import PulseClient
+
+# Fire-and-forget — zero overhead (~0.01ms/span)
+pulse = PulseClient(endpoint="http://localhost:8095")
+await pulse.record_execution(agent_id, query, result, duration_ms)
+await pulse.record_llm_call(model, tokens_in, tokens_out, latency_ms)
+await pulse.record_span(trace_id, parent_id, name, metadata)
+```
+
+**Dashboard** (port 8096): Execution history · LLM cost tracking · Span tree visualization · User feedback (👍/👎) · Adaptive learning loop
 
 ### Self-Evolution
 
@@ -282,7 +302,7 @@ Agent fails → FailureLogger → 30% threshold → FORGE improves
 
 ### Desktop Agent
 
-Control your desktop through natural language — 55+ agents, each independent:
+Control your desktop through natural language — 56+ agents, each independent:
 
 ```
 desktop_agent (dynamic LLM router — no hardcoded routes)
@@ -317,6 +337,17 @@ Conditional execution · AI summary · Multi-channel (KakaoTalk/Gmail/Telegram)
 
 Web management: `http://localhost:8010/auto-reports`
 
+## Testing
+
+54 tests across framework core, Agentic AI, and observability:
+
+```bash
+pytest logosai/tests/ -v           # Framework + Agentic AI tests
+pytest logos_pulse/tests/ -v      # Observability + tracing tests
+```
+
+Key coverage: Tool Use · ReAct · Persistent Memory · Goal Decomposition · Span Tracing · Feedback API · Learning Loop · SSE Bidirectional · Interaction Engine (31 tests + 7 evaluations)
+
 ## Documentation
 
 | Guide | Description |
@@ -326,36 +357,33 @@ Web management: `http://localhost:8010/auto-reports`
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |
 | [Samples](samples/) | Runnable examples — ResearchAgent, calculator, hello world |
 
-## CLI
+## Full Stack Quick Start
+
+**macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-macos.sh | bash
+```
+
+**Ubuntu / Debian:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/maior/logosai-framework/main/install-ubuntu.sh | bash
+```
 
 ```bash
-logosai init               # Create ~/.logosai/ (config + SQLite database)
-logosai status             # Show config, API keys, DB size
-logosai serve              # Start agent server (default port 9000)
-logosai serve --port 8888  # Custom port
-logosai agents             # List agents on running server
+cd ~/logosai
+./start.sh       # Start all services
+./stop.sh        # Stop all services
+./status.sh      # Check what's running
 ```
 
-## Data Storage
-
-LogosAI uses **SQLite** — zero-config, single file at `~/.logosai/logosai.db`.
-
-```python
-from logosai import LocalStore
-
-store = LocalStore()
-await store.initialize()
-
-# Agent learnings persist across sessions
-await store.save_learning("my_agent", "Gmail compose quirk", "Add &fs=1 to URL", tags=["gmail"])
-learnings = await store.get_learnings(tags=["gmail"])
-
-# Session history
-await store.save_message(session_id, "my_agent", "What's the weather?", role="user")
-
-# Agent performance metrics
-stats = await store.get_agent_stats()
-```
+| Service | Port | Description |
+|---------|------|-------------|
+| logos_web | 8010 | Next.js frontend — chat, [admin](/admin), auto reports, [architecture](/architecture) |
+| logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
+| ACP Server | 8888 | Agent runtime — 56+ agents, self-evolution, L3/L4 |
+| LogosPulse API | 8095 | Observability backend — execution traces, LLM metrics, costs |
+| LogosPulse UI | 8096 | Observability dashboard — span tree, feedback, learning loop |
+| PostgreSQL | 5432 | Database |
 
 ## Requirements
 
@@ -363,7 +391,9 @@ stats = await store.get_agent_stats()
 
 **LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai, langchain
 
-**Desktop Agent** (`pip install logosai[desktop]`): macOS: Peekaboo + Accessibility · Ubuntu: xdotool, xclip, scrot
+**Desktop Agent**: macOS: Peekaboo + Accessibility · Ubuntu: xdotool, xclip, scrot
+
+**Full Stack**: Node.js 18+, PostgreSQL 14+
 
 ## Related Repositories
 
@@ -372,6 +402,7 @@ stats = await store.get_agent_stats()
 | [logosai-ontology](https://github.com/maior/logosai-ontology) | Multi-agent orchestration (GNN+RL+KG+LLM) |
 | [logosai-api](https://github.com/maior/logosai-api) | FastAPI backend server |
 | [logosai-web](https://github.com/maior/logosai-web) | Next.js frontend |
+| [logosai-pulse](https://github.com/maior/logosai-pulse) | Agent Observability (traces, metrics, feedback) |
 
 ## License
 
