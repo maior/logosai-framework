@@ -1,7 +1,11 @@
 """
-AgenticMemory - 메모리 시스템
+AgenticMemory - 인메모리 메모리 시스템 (DEPRECATED)
 
-장단기 메모리 관리를 통해 에이전트의 학습과 컨텍스트 유지를 지원합니다.
+⚠️ 이 모듈은 더 이상 실전에서 사용되지 않습니다.
+실전 메모리는 storage/agent_memory_store.py (PostgreSQL + 임베딩 검색)를 사용합니다.
+
+이 모듈의 인지 모델(STM/LTM, 시간감쇠, 연관 링크)은 참고용으로 보존합니다.
+향후 agent_memory_store.py의 캐시 레이어로 재활용할 수 있습니다.
 """
 
 import asyncio

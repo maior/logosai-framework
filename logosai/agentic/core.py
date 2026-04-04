@@ -128,6 +128,7 @@ class AgenticCore:
         llm_client: Optional[LLMClient] = None,
         agent_name: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
+        tool_executor=None,
     ):
         """
         AgenticCore 초기화
@@ -136,17 +137,21 @@ class AgenticCore:
             llm_client: LLM 클라이언트 (없으면 기본값 사용)
             agent_name: 에이전트 이름 (로깅/컨텍스트용)
             config: 에이전트 설정 (agentic_config dict)
+            tool_executor: 도구 실행 콜백 — async def(tool_name, parameters) → result
+                           agent.py에서 주입하여 실제 도구 실행을 연결.
+                           None이면 기존 LLM 시뮬레이션 방식으로 동작.
         """
         self.agent_name = agent_name or "Agent"
         self.config = config or {}
         self.llm_client = llm_client or self._create_default_llm()
+        self._tool_executor = tool_executor
         self.state = AgenticState.IDLE
         self.thought_history: List[ThoughtProcess] = []
         self.action_history: List[Action] = []
         self.reflection_history: List[Reflection] = []
         self.current_confidence = 0.5
 
-        logger.info(f"AgenticCore initialized for {self.agent_name}")
+        logger.info(f"AgenticCore initialized for {self.agent_name} (tool_executor={'connected' if tool_executor else 'none'})")
     
     def _create_default_llm(self) -> LLMClient:
         """기본 LLM 클라이언트 생성"""
@@ -362,36 +367,61 @@ class AgenticCore:
     async def act(self, action: Action) -> Dict[str, Any]:
         """
         행동을 실행합니다.
-        
+
+        도구가 필요한 행동(requires_tool=True)이고 tool_executor가 연결되어 있으면
+        실제 도구를 실행합니다. 그렇지 않으면 LLM으로 결과를 생성합니다.
+
         Args:
             action: 실행할 행동
-            
+
         Returns:
-            Dict[str, Any]: 실행 결과
+            Dict[str, Any]: 실행 결과 {"success", "result", "output", "issues"}
         """
         self.state = AgenticState.ACTING
         logger.debug(f"Executing action: {action.name}")
-        
+
         try:
-            # Record action
             self.action_history.append(action)
-            
-            # Simulate action execution using LLM
+
+            # Case 1: 도구 필요 + executor 연결됨 → 실제 도구 실행
+            if action.requires_tool and action.tool_name and self._tool_executor:
+                logger.info(f"Action {action.name}: executing tool '{action.tool_name}' with real executor")
+                try:
+                    tool_result = await self._tool_executor(action.tool_name, action.parameters)
+                    result = {
+                        "success": True,
+                        "result": str(tool_result),
+                        "output": {"tool": action.tool_name, "raw": tool_result},
+                        "issues": [],
+                    }
+                except Exception as tool_err:
+                    logger.warning(f"Tool execution failed for {action.tool_name}: {tool_err}")
+                    result = {
+                        "success": False,
+                        "result": f"Tool execution failed: {tool_err}",
+                        "output": {},
+                        "issues": [str(tool_err)],
+                    }
+
+                logger.info(f"Action {action.name} completed: success={result['success']}")
+                return result
+
+            # Case 2: 도구 불필요 또는 executor 없음 → LLM 생성
             execution_prompt = f"""
             Simulate the execution of the following action:
-            
+
             Action: {action.name}
             Description: {action.description}
             Parameters: {action.parameters}
             Expected Outcome: {action.expected_outcome or 'Not specified'}
-            
+
             Provide a realistic result of this action execution.
             Include:
             1. Whether it was successful
             2. What was accomplished
             3. Any data or output produced
             4. Any issues encountered
-            
+
             Respond in JSON format:
             {{
                 "success": true,
@@ -400,10 +430,9 @@ class AgenticCore:
                 "issues": []
             }}
             """
-            
+
             response = await self.llm_client.invoke(execution_prompt)
-            
-            # Parse response
+
             import json
             try:
                 result = json.loads(response.content)
@@ -414,10 +443,10 @@ class AgenticCore:
                     "output": {},
                     "issues": []
                 }
-            
+
             logger.info(f"Action {action.name} completed: success={result.get('success', False)}")
             return result
-            
+
         except Exception as e:
             logger.error(f"Error during action execution: {e}")
             return {
