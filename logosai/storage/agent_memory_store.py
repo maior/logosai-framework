@@ -4,6 +4,7 @@ Each agent can store and recall memories (facts, experiences, patterns).
 Memories are automatically injected into LLM context for relevant queries.
 
 Storage: PostgreSQL (logosai schema, agent_memories table)
+Search: Hybrid (embedding cosine similarity + keyword matching)
 Fallback: In-memory dict (when DB unavailable)
 
 Usage:
@@ -14,11 +15,13 @@ Usage:
                       "Spring in Seoul is usually 10-15°C with occasional rain",
                       importance=0.8, tags=["weather", "seoul"])
 
-    memories = await store.recall("weather_agent", "Seoul weather", top_k=3)
+    # 의미 기반 검색 — "수도 기온"으로도 "Seoul weather" 찾음
+    memories = await store.recall("weather_agent", "수도 기온", top_k=3)
 """
 
 import os
 import time
+import json as _json
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -62,6 +65,7 @@ class AgentMemoryStore:
         self._pool = None
         self._fallback: Dict[str, List[Dict]] = {}  # agent_id → memories
         self._initialized = False
+        self._embed_client = None  # Gemini embedding client (lazy)
 
     async def initialize(self):
         """Create table and connection pool."""
@@ -101,11 +105,52 @@ class AgentMemoryStore:
                     access_count INTEGER DEFAULT 0,
                     created_at DOUBLE PRECISION NOT NULL,
                     last_accessed_at DOUBLE PRECISION,
+                    embedding JSONB,
                     UNIQUE(agent_id, key)
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_mem_agent ON agent_memories(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_mem_time ON agent_memories(created_at);
             """)
+            # 기존 테이블에 embedding 컬럼이 없으면 추가
+            try:
+                await conn.execute("""
+                    ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS embedding JSONB
+                """)
+            except Exception:
+                pass  # 이미 존재
+
+    # ══════════════════════════════════════════════════════════
+    # Embedding
+    # ══════════════════════════════════════════════════════════
+
+    async def _get_embedding(self, text: str) -> Optional[List[float]]:
+        """Gemini embedding API로 텍스트 임베딩 생성. 실패 시 None 반환."""
+        try:
+            if self._embed_client is None:
+                import google.genai as genai
+                api_key = os.getenv("GOOGLE_API_KEY", "")
+                if not api_key:
+                    return None
+                self._embed_client = genai.Client(api_key=api_key)
+
+            result = self._embed_client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=text[:500],  # 임베딩 입력 제한
+            )
+            return result.embeddings[0].values
+        except Exception as e:
+            logger.debug(f"Embedding failed: {e}")
+            return None
+
+    @staticmethod
+    def _cosine_similarity(a: List[float], b: List[float]) -> float:
+        """두 벡터의 코사인 유사도 계산 (0~1)."""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(x * x for x in b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
     # ══════════════════════════════════════════════════════════
     # Store
@@ -130,23 +175,27 @@ class AgentMemoryStore:
             importance: 0.0-1.0 (higher = more important)
             tags: Searchable tags
         """
-        import json
         now = time.time()
-        tags_json = json.dumps(tags or [])
+        tags_json = _json.dumps(tags or [])
+
+        # 임베딩 생성 (비동기, 실패해도 저장은 진행)
+        embedding = await self._get_embedding(f"{key}: {content}")
+        embedding_json = _json.dumps(embedding) if embedding else None
 
         if self._pool:
             try:
                 async with self._pool.acquire() as conn:
                     await conn.execute("""
-                        INSERT INTO agent_memories (agent_id, key, content, memory_type, importance, tags, created_at, last_accessed_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+                        INSERT INTO agent_memories (agent_id, key, content, memory_type, importance, tags, created_at, last_accessed_at, embedding)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8::jsonb)
                         ON CONFLICT (agent_id, key) DO UPDATE SET
                             content = EXCLUDED.content,
                             importance = EXCLUDED.importance,
                             tags = EXCLUDED.tags,
                             access_count = agent_memories.access_count + 1,
-                            last_accessed_at = EXCLUDED.last_accessed_at
-                    """, agent_id, key, content, memory_type, importance, tags_json, now)
+                            last_accessed_at = EXCLUDED.last_accessed_at,
+                            embedding = EXCLUDED.embedding
+                    """, agent_id, key, content, memory_type, importance, tags_json, now, embedding_json)
 
                 # Capacity management: max 100 memories per agent
                 await self._enforce_capacity(conn, agent_id, max_per_agent=100)
@@ -185,63 +234,79 @@ class AgentMemoryStore:
     ) -> List[Dict[str, Any]]:
         """Recall relevant memories for an agent.
 
-        Search by keyword matching in key+content, filtered by tags and importance.
-        Results sorted by importance × recency.
+        Hybrid search: embedding cosine similarity + keyword matching.
+        "서울 날씨"로 검색하면 "수도 기온 정보"도 의미적으로 찾을 수 있음.
 
         Args:
             agent_id: Agent ID
-            query: Search query (keyword match in key and content)
+            query: Search query (semantic + keyword hybrid)
             tags: Filter by tags (any match)
             top_k: Max results
             min_importance: Minimum importance threshold
         """
-        import json
-
         if self._pool:
             try:
                 async with self._pool.acquire() as conn:
-                    # Keyword search in key + content
-                    if query:
-                        # Split query into keywords and match ANY keyword
-                        keywords = [w for w in query.split() if len(w) >= 2]
-                        if keywords:
-                            # Build OR conditions for each keyword
-                            conditions = " OR ".join([
-                                f"(key ILIKE '%' || ${i+3} || '%' OR content ILIKE '%' || ${i+3} || '%')"
-                                for i in range(len(keywords))
-                            ])
-                            sql = f"""
-                                SELECT *,
-                                       importance * (1.0 / (1.0 + (extract(epoch from now()) - created_at) / 86400.0)) as score
-                                FROM agent_memories
-                                WHERE agent_id = $1
-                                  AND importance >= $2
-                                  AND ({conditions})
-                                ORDER BY score DESC
-                                LIMIT ${len(keywords)+3}
-                            """
-                            rows = await conn.fetch(sql, agent_id, min_importance, *keywords, top_k)
-                        else:
-                            rows = []
-                    else:
-                        rows = await conn.fetch("""
-                            SELECT *,
-                                   importance * (1.0 / (1.0 + (extract(epoch from now()) - created_at) / 86400.0)) as score
-                            FROM agent_memories
-                            WHERE agent_id = $1 AND importance >= $2
-                            ORDER BY score DESC
-                            LIMIT $3
-                        """, agent_id, min_importance, top_k)
+                    # 1단계: 해당 에이전트의 메모리 전부 가져오기 (최대 100개)
+                    rows = await conn.fetch("""
+                        SELECT *,
+                               importance * (1.0 / (1.0 + (extract(epoch from now()) - created_at) / 86400.0)) as base_score
+                        FROM agent_memories
+                        WHERE agent_id = $1 AND importance >= $2
+                        ORDER BY base_score DESC
+                        LIMIT 100
+                    """, agent_id, min_importance)
 
                     results = [dict(r) for r in rows]
+
+                    if query and results:
+                        # 2단계: 키워드 매칭 스코어
+                        keywords = [w.lower() for w in query.split() if len(w) >= 2]
+                        for r in results:
+                            kw_score = 0.0
+                            text = f"{r['key']} {r['content']}".lower()
+                            for kw in keywords:
+                                if kw in text:
+                                    kw_score += 1.0
+                            r["keyword_score"] = kw_score / max(len(keywords), 1)
+
+                        # 3단계: 임베딩 유사도 스코어
+                        query_embedding = await self._get_embedding(query)
+                        for r in results:
+                            emb = r.get("embedding")
+                            if query_embedding and emb:
+                                # DB에서 JSONB로 저장된 embedding 파싱
+                                if isinstance(emb, str):
+                                    emb = _json.loads(emb)
+                                r["semantic_score"] = self._cosine_similarity(query_embedding, emb)
+                            else:
+                                r["semantic_score"] = 0.0
+
+                        # 4단계: 하이브리드 스코어 = base_score × (0.4×semantic + 0.4×keyword + 0.2)
+                        for r in results:
+                            sem = r["semantic_score"]
+                            kw = r["keyword_score"]
+                            base = r["base_score"]
+                            # semantic이나 keyword 중 하나라도 매칭되면 가산
+                            relevance = 0.4 * sem + 0.4 * kw + 0.2  # 0.2는 base 보장
+                            r["hybrid_score"] = base * relevance
+
+                        # 최소 하나라도 매칭된 것만 (semantic>0.3 OR keyword>0)
+                        results = [
+                            r for r in results
+                            if r["semantic_score"] > 0.3 or r["keyword_score"] > 0
+                        ]
+                        results.sort(key=lambda r: r["hybrid_score"], reverse=True)
 
                     # Tag filter
                     if tags:
                         tag_set = set(t.lower() for t in tags)
                         results = [
                             r for r in results
-                            if any(t.lower() in tag_set for t in json.loads(r.get("tags", "[]")))
+                            if any(t.lower() in tag_set for t in _json.loads(r.get("tags", "[]")))
                         ]
+
+                    results = results[:top_k]
 
                     # Update access count
                     for r in results:
@@ -250,11 +315,11 @@ class AgentMemoryStore:
                             time.time(), r["id"],
                         )
 
-                    return results[:top_k]
+                    return results
             except Exception as e:
                 logger.warning(f"AgentMemoryStore recall failed: {e}")
 
-        # Fallback
+        # Fallback (in-memory, keyword only)
         memories = self._fallback.get(agent_id, [])
         if query:
             q = query.lower()

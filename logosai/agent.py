@@ -2,6 +2,12 @@
 LogosAI Agent Implementation
 
 This module provides the base classes and utility functions for LogosAI agents.
+Agentic 기능은 mixins/ 디렉토리에 역할별로 분리:
+  - ToolUseMixin: 도구 등록 + Tool Use Loop
+  - MemoryMixin: 영속 메모리 (PostgreSQL)
+  - ReActMixin: ReAct 패턴 (Think→Act→Observe)
+  - PlanningMixin: Goal 분해 + 실행
+  - MultiAgentMixin: 에이전트 간 통신/위임/생성
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from typing import Dict, Any, Optional, Union, List, Tuple, TYPE_CHECKING
 from .agent_types import AgentType, AgentResponse, AgentResponseType
 from .config import AgentConfig
 from loguru import logger
+from .mixins import ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin
 
 if TYPE_CHECKING:
     from .collaboration import CollaborationService, CollaborationResult, AgentCapability
@@ -46,8 +53,16 @@ def _lazy_import_query_optimizer():
 # Logging setup
 logger = logging.getLogger(__name__)
 
-class LogosAIAgent:
-    """LogosAI Agent Base Class - Conditional Agentic AI Support"""
+class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin):
+    """LogosAI Agent Base Class - Conditional Agentic AI Support
+
+    Agentic 기능은 Mixin으로 분리되어 있음:
+      ToolUseMixin  — register_tool, run_with_tools, has_tools
+      MemoryMixin   — memorize, recall, recall_as_context, forget
+      ReActMixin    — react()
+      PlanningMixin — plan(), plan_stream()
+      MultiAgentMixin — call_agent, delegate, spawn_agent
+    """
 
     def __init__(self, config: AgentConfig):
         """Initialize agent
@@ -87,19 +102,13 @@ class LogosAIAgent:
         # Inter-agent collaboration service (injected by ACP server at runtime)
         self._collaboration_service: Optional[CollaborationService] = None
 
-        # Agent registry for direct agent-to-agent calls (injected by ACP server)
-        # Usage: result = await self.call_agent("internet_agent", "search query")
-        self._agent_registry: Optional[Dict[str, 'LogosAIAgent']] = None
+        # Mixin 초기화
+        self._init_tool_use()       # ToolUseMixin: _tools, _tool_executors, _tool_metrics
+        self._init_memory()         # MemoryMixin: _memory_store
+        self._init_multi_agent()    # MultiAgentMixin: _agent_registry
 
-        # Tool registry — agents can register tools for autonomous use
-        self._tools: List[Dict] = []
-        self._tool_executors: Dict[str, Any] = {}
-
-        # Memory store — persistent agent memory (PostgreSQL)
-        self._memory_store = None
-
-        # Tool usage metrics
-        self._tool_metrics: Dict[str, Dict] = {}  # tool_name → {calls, successes, failures}
+        # Inter-agent collaboration service (injected by ACP server at runtime)
+        self._collaboration_service: Optional[CollaborationService] = None
 
         # Stream callback for Human-in-the-Loop (SSE approval events)
         # Injected by ACP server's sse_handlers at runtime
@@ -120,6 +129,22 @@ class LogosAIAgent:
 
         return False
 
+    async def _execute_tool_for_core(self, tool_name: str, parameters: Dict) -> Any:
+        """AgenticCore → agent 도구 실행 브릿지.
+
+        AgenticCore.act()에서 requires_tool=True인 Action을 실행할 때 호출됨.
+        agent의 _tool_executors에 등록된 실제 도구를 실행합니다.
+        """
+        executor = self._tool_executors.get(tool_name)
+        if not executor:
+            return f"Tool '{tool_name}' not registered"
+
+        import asyncio
+        if asyncio.iscoroutinefunction(executor):
+            return await executor(**parameters)
+        else:
+            return await asyncio.to_thread(executor, **parameters)
+
     def _init_agentic_features(self):
         """Initialize Agentic AI features"""
         try:
@@ -134,10 +159,11 @@ class LogosAIAgent:
 
             agentic_config = self.config.config.get('agentic_config', {})
 
-            # Initialize Core module
+            # Initialize Core module — tool_executor로 실제 도구 실행 연결
             self._agentic_core = AgenticCore(
                 agent_name=self.name,
-                config=agentic_config
+                config=agentic_config,
+                tool_executor=self._execute_tool_for_core,
             )
 
             # Initialize Reasoning module (only if reasoning_type exists)
@@ -180,672 +206,15 @@ class LogosAIAgent:
     # Tool Registration
     # ═══════════════════════════════════════════
 
-    def register_tool(self, name: str, description: str, executor, parameters: Dict = None):
-        """Register a tool that this agent can use autonomously.
+    # ToolUseMixin: register_tool, register_builtin_tools, has_tools, tool_metrics, run_with_tools → mixins/tool_use.py
+    # MemoryMixin: memorize, recall, recall_as_context, forget, _ensure_memory → mixins/memory.py
 
-        Args:
-            name: Tool name (unique)
-            description: What the tool does (LLM reads this)
-            executor: Async or sync callable
-            parameters: {param_name: {"type": "string", "description": "..."}}
+    # ToolUseMixin: run_with_tools → mixins/tool_use.py
 
-        Example:
-            agent.register_tool(
-                "search", "Search the web for information",
-                my_search_func,
-                {"query": {"type": "string", "description": "Search query"}}
-            )
-        """
-        # Remove existing tool with same name
-        self._tools = [t for t in self._tools if t["name"] != name]
-        self._tools.append({
-            "name": name,
-            "description": description,
-            "parameters": parameters or {},
-        })
-        self._tool_executors[name] = executor
-        self.logger.debug(f"Tool registered: {name} ({len(self._tools)} total)")
+    # PlanningMixin: plan, plan_stream → mixins/planning.py
+    # ReActMixin: react → mixins/react.py
 
-    def register_builtin_tools(self):
-        """Register all built-in tools (calculator, datetime, text)."""
-        try:
-            from .tools import BUILTIN_TOOLS, BUILTIN_EXECUTORS
-            for tool in BUILTIN_TOOLS:
-                self._tools = [t for t in self._tools if t["name"] != tool["name"]]
-                self._tools.append(tool)
-            self._tool_executors.update(BUILTIN_EXECUTORS)
-            self.logger.debug(f"Built-in tools registered: {[t['name'] for t in BUILTIN_TOOLS]}")
-        except ImportError:
-            self.logger.debug("Built-in tools not available")
 
-    @property
-    def has_tools(self) -> bool:
-        return bool(self._tools)
-
-    @property
-    def tool_metrics(self) -> Dict[str, Dict]:
-        """Get tool usage metrics: {tool_name: {calls, successes, failures}}."""
-        return self._tool_metrics
-
-    # ═══════════════════════════════════════════
-    # Persistent Memory
-    # ═══════════════════════════════════════════
-
-    async def _ensure_memory(self):
-        """Lazy-initialize memory store."""
-        if self._memory_store is None:
-            try:
-                from .storage.agent_memory_store import AgentMemoryStore
-                self._memory_store = AgentMemoryStore.get()
-                await self._memory_store.initialize()
-            except Exception as e:
-                self.logger.debug(f"Memory store unavailable: {e}")
-
-    async def memorize(self, key: str, content: str, importance: float = -1, tags: List[str] = None):
-        """Store a memory for this agent.
-
-        If importance is not provided (-1), LLM auto-evaluates it.
-
-        Example:
-            await self.memorize("gmail_tip", "Add &fs=1 to Gmail compose URL", tags=["gmail"])
-            # → LLM auto-evaluates importance (e.g., 0.85)
-        """
-        await self._ensure_memory()
-        if not self._memory_store:
-            return
-
-        # Auto-evaluate importance if not provided
-        if importance < 0:
-            importance = await self._evaluate_memory_importance(key, content)
-
-        await self._memory_store.store(self.id, key, content, importance=importance, tags=tags)
-
-    async def _evaluate_memory_importance(self, key: str, content: str) -> float:
-        """LLM auto-evaluates memory importance (0.0 - 1.0)."""
-        try:
-            llm = getattr(self, '_llm', None) or getattr(self, 'llm_client', None)
-            if not llm:
-                return 0.5
-
-            import re
-            resp = await asyncio.wait_for(llm.invoke(
-                f"Rate the importance of this information for an AI agent on a scale of 0.0 to 1.0.\n\n"
-                f"Key: {key}\nContent: {content}\n\n"
-                f"Criteria:\n"
-                f"- 0.9-1.0: Critical (user preferences, recurring errors, key facts)\n"
-                f"- 0.7-0.8: Important (useful patterns, domain knowledge)\n"
-                f"- 0.4-0.6: Moderate (general information)\n"
-                f"- 0.1-0.3: Low (trivial, temporary)\n\n"
-                f"Return ONLY a number between 0.0 and 1.0."
-            ), timeout=5)
-            text = resp.content if hasattr(resp, 'content') else str(resp)
-            match = re.search(r'(\d+\.?\d*)', text.strip())
-            if match:
-                return max(0.0, min(1.0, float(match.group(1))))
-        except Exception:
-            pass
-        return 0.5  # Default fallback
-
-    async def recall(self, query: str = "", tags: List[str] = None, top_k: int = 5) -> List[Dict]:
-        """Recall relevant memories for this agent.
-
-        Returns list of {key, content, importance, ...}
-        """
-        await self._ensure_memory()
-        if self._memory_store:
-            return await self._memory_store.recall(self.id, query=query, tags=tags, top_k=top_k)
-        return []
-
-    async def recall_as_context(self, query: str = "", top_k: int = 3) -> str:
-        """Recall memories and format as LLM context string.
-
-        Returns empty string if no relevant memories found.
-        Used internally by react()/run_with_tools() for auto-injection.
-        """
-        memories = await self.recall(query, top_k=top_k)
-        if not memories:
-            return ""
-        lines = [f"- {m['key']}: {m['content']}" for m in memories]
-        return "Relevant memories from past interactions:\n" + "\n".join(lines)
-
-    async def forget(self, key: str):
-        """Delete a specific memory."""
-        await self._ensure_memory()
-        if self._memory_store:
-            await self._memory_store.forget(self.id, key)
-
-    # ═══════════════════════════════════════════
-    # Tool Use Loop (Agentic AI)
-    # ═══════════════════════════════════════════
-
-    async def run_with_tools(
-        self,
-        query: str,
-        tools: List[Dict],
-        tool_executors: Dict[str, Any],
-        system_prompt: str = "",
-        max_iterations: int = 5,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> 'AgentResponse':
-        """Run agent with tool use loop.
-
-        LLM decides which tools to use, executes them, observes results,
-        and repeats until it has enough information to answer.
-
-        Args:
-            query: User query
-            tools: Tool definitions for LLM [{name, description, parameters}]
-            tool_executors: Mapping of tool name → async callable
-            system_prompt: System instruction for LLM
-            max_iterations: Maximum tool call rounds (safety limit)
-            context: Additional context
-
-        Returns:
-            AgentResponse with final answer (after tool use)
-
-        Example:
-            tools = [{"name": "calculator", "description": "...", "parameters": {...}}]
-            executors = {"calculator": async_calc_func}
-            result = await agent.run_with_tools("325/60은?", tools, executors)
-        """
-        from .agent_types import AgentResponse, AgentResponseType
-
-        if not self.initialized:
-            await self.initialize()
-
-        # Ensure LLM
-        llm = getattr(self, '_llm', None)
-        if not llm:
-            try:
-                from .utils.llm_client import LLMClient
-                from .config.llm_defaults import get_default_provider, get_default_model
-                llm = LLMClient(provider=get_default_provider(), model=get_default_model())
-                await llm.initialize()
-                self._llm = llm
-            except Exception as e:
-                return AgentResponse(
-                    type=AgentResponseType.ERROR,
-                    content={"answer": f"LLM 초기화 실패: {e}"},
-                    message=str(e),
-                )
-
-        # Auto-inject relevant memories
-        memory_context = await self.recall_as_context(query, top_k=3)
-
-        # Build messages
-        messages = []
-        sys_content = system_prompt or ""
-        if memory_context:
-            sys_content += f"\n\n{memory_context}"
-        if sys_content:
-            messages.append({"role": "system", "content": sys_content})
-        messages.append({"role": "user", "content": query})
-
-        # Context window management
-        from .utils.context_manager import ContextManager
-        ctx_mgr = ContextManager(max_tokens=getattr(llm, 'max_tokens', 4000) or 4000)
-
-        # Tool use loop
-        for iteration in range(max_iterations):
-            # Auto-prune if context grows too large
-            messages = ctx_mgr.fit_messages(messages)
-
-            try:
-                response = await asyncio.wait_for(
-                    llm.invoke_with_tools(messages, tools=tools),
-                    timeout=15,
-                )
-            except (asyncio.TimeoutError, Exception) as e:
-                self.logger.warning(f"Tool loop LLM call failed (iter {iteration}): {e}")
-                break
-
-            # If no tool calls, we have the final answer
-            if not response.has_tool_calls:
-                return AgentResponse(
-                    type=AgentResponseType.SUCCESS,
-                    content={"answer": response.content, "iterations": iteration + 1},
-                    message="Tool use completed",
-                )
-
-            # Execute tool calls
-            for tc in response.tool_calls:
-                executor = tool_executors.get(tc.name)
-                if not executor:
-                    # Unknown tool — tell LLM
-                    messages.append({"role": "assistant", "content": f"[Tool call: {tc.name}({tc.args})]"})
-                    messages.append({"role": "user", "content": f"[Tool error: '{tc.name}' is not available]"})
-                    self.logger.warning(f"Tool '{tc.name}' not found in executors")
-                    continue
-
-                # Track metrics
-                if tc.name not in self._tool_metrics:
-                    self._tool_metrics[tc.name] = {"calls": 0, "successes": 0, "failures": 0}
-                self._tool_metrics[tc.name]["calls"] += 1
-
-                try:
-                    tool_result = await asyncio.wait_for(
-                        executor(**tc.args) if asyncio.iscoroutinefunction(executor) else asyncio.to_thread(executor, **tc.args),
-                        timeout=10,
-                    )
-                    tool_result_str = str(tool_result)
-
-                    # Validate result — empty/error detection
-                    is_valid = bool(tool_result_str) and len(tool_result_str) > 1 and "Error:" not in tool_result_str
-                    if is_valid:
-                        self._tool_metrics[tc.name]["successes"] += 1
-                        self.logger.info(f"  Tool [{tc.name}]: {tool_result_str[:80]}")
-                    else:
-                        self._tool_metrics[tc.name]["failures"] += 1
-                        self.logger.warning(f"  Tool [{tc.name}] invalid result: {tool_result_str[:80]}")
-                        tool_result_str = f"[Tool returned invalid result: {tool_result_str[:100]}. Try a different approach.]"
-
-                except Exception as e:
-                    self._tool_metrics[tc.name]["failures"] += 1
-                    tool_result_str = f"[Tool error: {e}. Try a different approach or answer without this tool.]"
-                    self.logger.warning(f"  Tool [{tc.name}] failed: {e}")
-
-                # Inject tool result back into conversation
-                messages.append({"role": "assistant", "content": f"[Tool call: {tc.name}({tc.args})]"})
-                messages.append({"role": "user", "content": f"[Tool result: {tc.name}] {tool_result_str}"})
-
-        # Max iterations reached — return whatever we have
-        return AgentResponse(
-            type=AgentResponseType.SUCCESS,
-            content={"answer": response.content if response else "도구 실행 결과를 종합할 수 없습니다.", "iterations": max_iterations},
-            message=f"Max iterations ({max_iterations}) reached",
-        )
-
-    # ═══════════════════════════════════════════
-    # Goal Decomposition (Plan → Execute)
-    # ═══════════════════════════════════════════
-
-    async def plan(
-        self,
-        query: str,
-        tools: List[Dict] = None,
-        tool_executors: Dict[str, Any] = None,
-        system_prompt: str = "",
-        context: Optional[Dict[str, Any]] = None,
-    ) -> 'AgentResponse':
-        """Decompose a complex query into sub-goals and execute each.
-
-        For simple queries: runs as single step (no overhead).
-        For complex queries: breaks into sub-goals with dependencies,
-        executes in order, combines results.
-
-        Each sub-goal is executed via react() (with tools if available).
-
-        Args:
-            query: User query
-            tools: Tool definitions (optional)
-            tool_executors: Tool executors (optional)
-            system_prompt: System instruction
-            context: Additional context
-
-        Returns:
-            AgentResponse with combined results from all sub-goals
-
-        Example:
-            result = await agent.plan(
-                "Search Tesla and Apple earnings, compare, and write a report",
-                tools=BUILTIN_TOOLS, tool_executors=BUILTIN_EXECUTORS,
-            )
-        """
-        from .agent_types import AgentResponse, AgentResponseType
-        from .agentic.planner import plan_goal, execute_goal_tree
-
-        if not self.initialized:
-            await self.initialize()
-
-        llm = getattr(self, '_llm', None) or getattr(self, 'llm_client', None)
-
-        # Step 1: Decompose into goal tree
-        try:
-            tree = await plan_goal(query, llm=llm)
-        except Exception as e:
-            self.logger.warning(f"Plan failed, falling back to react: {e}")
-            return await self.react(query, tools, tool_executors, system_prompt, context=context)
-
-        num_goals = len(tree.root.sub_goals)
-        self.logger.info(f"Plan: {num_goals} goals for '{query[:40]}'")
-
-        # Step 2: If simple (1 goal), just use react directly
-        if num_goals <= 1:
-            return await self.react(query, tools, tool_executors, system_prompt, context=context)
-
-        # Step 3: Execute each sub-goal via react()
-        _tools = tools or self._tools
-        _executors = tool_executors or self._tool_executors
-
-        async def goal_executor(title, goal_context=None):
-            """Execute a single sub-goal using react()."""
-            # Build context from previous goal results
-            ctx_str = ""
-            if goal_context:
-                ctx_str = "\n".join([f"- {v[:100]}" for v in goal_context.values() if v])
-
-            sub_prompt = title
-            if ctx_str:
-                sub_prompt = f"{title}\n\nContext from previous steps:\n{ctx_str}"
-
-            result = await self.react(
-                sub_prompt,
-                tools=_tools if _tools else None,
-                tool_executors=_executors if _executors else None,
-                system_prompt=system_prompt,
-                max_steps=3,
-            )
-            return result.content.get("answer", str(result.content)) if isinstance(result.content, dict) else str(result.content)
-
-        await execute_goal_tree(tree, executor=goal_executor)
-
-        # Step 4: Combine results
-        results = tree.get_completed_results()
-        combined = "\n\n".join([
-            f"**{tree.get(gid).title}**:\n{result}"
-            for gid, result in results.items()
-            if gid != "root"
-        ])
-
-        # Step 5: Final synthesis (optional — let LLM combine)
-        if num_goals >= 3 and llm:
-            try:
-                synth = await asyncio.wait_for(llm.invoke(
-                    f"아래 단계별 결과를 종합하여 사용자의 원래 질문에 대한 최종 답변을 작성하세요.\n\n"
-                    f"원래 질문: {query}\n\n단계별 결과:\n{combined[:3000]}\n\n"
-                    f"종합적이고 정리된 최종 답변을 작성하세요."
-                ), timeout=15)
-                final = synth.content if hasattr(synth, 'content') else str(synth)
-            except Exception:
-                final = combined
-        else:
-            final = combined
-
-        return AgentResponse(
-            type=AgentResponseType.SUCCESS,
-            content={
-                "answer": final,
-                "goals": num_goals,
-                "progress": f"{tree.progress:.0%}",
-                "tree": tree.root.to_dict(),
-            },
-            message=f"Plan completed ({num_goals} goals)",
-        )
-
-    async def plan_stream(
-        self,
-        query: str,
-        tools: List[Dict] = None,
-        tool_executors: Dict[str, Any] = None,
-        system_prompt: str = "",
-        context: Optional[Dict[str, Any]] = None,
-    ):
-        """Plan with real-time progress streaming.
-
-        Same as plan() but yields SSE events as each sub-goal executes.
-
-        Yields:
-            {"type": "plan_created", "data": {"goals": N, "tree": {...}}}
-            {"type": "goal_started", "data": {"goal_id": "g1", "title": "...", "progress": "0%"}}
-            {"type": "goal_completed", "data": {"goal_id": "g1", "result": "...", "progress": "33%"}}
-            {"type": "plan_completed", "data": {"answer": "...", "goals": N}}
-        """
-        from .agent_types import AgentResponse, AgentResponseType
-        from .agentic.planner import plan_goal, execute_goal_tree_stream
-        import time as _time
-
-        if not self.initialized:
-            await self.initialize()
-
-        llm = getattr(self, '_llm', None) or getattr(self, 'llm_client', None)
-
-        # Step 1: Decompose
-        try:
-            tree = await plan_goal(query, llm=llm)
-        except Exception as e:
-            yield {"type": "error", "data": {"error": f"Plan failed: {e}"}, "timestamp": _time.time()}
-            return
-
-        num_goals = len(tree.root.sub_goals)
-
-        # Emit plan_created
-        yield {
-            "type": "plan_created",
-            "data": {
-                "goals": num_goals,
-                "tree": tree.root.to_dict(),
-                "query": query[:100],
-            },
-            "timestamp": _time.time(),
-        }
-
-        # Simple query → react directly, emit as single step
-        if num_goals <= 1:
-            yield {"type": "goal_started", "data": {"goal_id": "g1", "title": query[:60], "progress": "0%"}, "timestamp": _time.time()}
-            result = await self.react(query, tools, tool_executors, system_prompt, context=context)
-            answer = result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
-            yield {"type": "goal_completed", "data": {"goal_id": "g1", "title": query[:60], "result": answer[:200], "progress": "100%"}, "timestamp": _time.time()}
-            yield {"type": "plan_completed", "data": {"answer": answer, "goals": 1}, "timestamp": _time.time()}
-            return
-
-        # Step 2: Execute with streaming
-        _tools = tools or self._tools
-        _executors = tool_executors or self._tool_executors
-
-        async def goal_executor(title, goal_context=None):
-            ctx_str = ""
-            if goal_context:
-                ctx_str = "\n".join([f"- {v[:100]}" for v in goal_context.values() if v])
-            sub_prompt = title
-            if ctx_str:
-                sub_prompt = f"{title}\n\nContext from previous steps:\n{ctx_str}"
-            result = await self.react(
-                sub_prompt,
-                tools=_tools if _tools else None,
-                tool_executors=_executors if _executors else None,
-                system_prompt=system_prompt,
-                max_steps=3,
-            )
-            return result.content.get("answer", str(result.content)) if isinstance(result.content, dict) else str(result.content)
-
-        # Stream execution events
-        async for event in execute_goal_tree_stream(tree, executor=goal_executor):
-            yield {"type": event["event"], "data": event["data"], "timestamp": _time.time()}
-
-        # Step 3: Final synthesis
-        results = tree.get_completed_results()
-        combined = "\n\n".join([
-            f"**{tree.get(gid).title}**:\n{result}"
-            for gid, result in results.items() if gid != "root"
-        ])
-
-        if num_goals >= 3 and llm:
-            try:
-                synth = await asyncio.wait_for(llm.invoke(
-                    f"아래 단계별 결과를 종합하여 원래 질문에 대한 최종 답변을 작성하세요.\n\n"
-                    f"질문: {query}\n\n결과:\n{combined[:3000]}\n\n종합 답변 작성."
-                ), timeout=15)
-                final = synth.content if hasattr(synth, 'content') else str(synth)
-            except Exception:
-                final = combined
-        else:
-            final = combined
-
-        yield {
-            "type": "plan_completed",
-            "data": {"answer": final, "goals": num_goals, "progress": f"{tree.progress:.0%}"},
-            "timestamp": _time.time(),
-        }
-
-    # ═══════════════════════════════════════════
-    # ReAct Loop (Think → Act → Observe)
-    # ═══════════════════════════════════════════
-
-    async def react(
-        self,
-        query: str,
-        tools: List[Dict] = None,
-        tool_executors: Dict[str, Any] = None,
-        system_prompt: str = "",
-        max_steps: int = 5,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> 'AgentResponse':
-        """ReAct loop: Reasoning + Acting with explicit thought/observation steps.
-
-        Each step:
-          1. THINK: LLM reasons about what to do next (visible thought)
-          2. ACT: Execute a tool or generate final answer
-          3. OBSERVE: Evaluate tool result, decide if more steps needed
-
-        Args:
-            query: User query
-            tools: Tool definitions (optional — works without tools too)
-            tool_executors: Tool name → async callable
-            system_prompt: System instruction
-            max_steps: Maximum reasoning steps
-            context: Additional context
-
-        Returns:
-            AgentResponse with final answer + reasoning trace
-
-        Example:
-            result = await agent.react(
-                "서울~부산 거리 구해서 시속100km로 걸리는 시간 계산해줘",
-                tools=BUILTIN_TOOLS, tool_executors=BUILTIN_EXECUTORS,
-            )
-        """
-        from .agent_types import AgentResponse, AgentResponseType
-
-        if not self.initialized:
-            await self.initialize()
-
-        llm = getattr(self, '_llm', None)
-        if not llm:
-            try:
-                from .utils.llm_client import LLMClient
-                from .config.llm_defaults import get_default_provider, get_default_model
-                llm = LLMClient(provider=get_default_provider(), model=get_default_model())
-                await llm.initialize()
-                self._llm = llm
-            except Exception as e:
-                return AgentResponse(
-                    type=AgentResponseType.ERROR,
-                    content={"answer": f"LLM 초기화 실패: {e}"},
-                    message=str(e),
-                )
-
-        # Auto-inject relevant memories into context
-        memory_context = await self.recall_as_context(query, top_k=3)
-
-        # Build ReAct system prompt
-        react_system = system_prompt or "당신은 문제를 단계적으로 해결하는 AI 에이전트입니다."
-        if memory_context:
-            react_system += f"\n\n{memory_context}\n"
-        react_system += """
-
-You must follow the ReAct pattern strictly:
-
-1. **Thought**: Analyze what you know and what you need to find out. Write your reasoning.
-2. **Action**: If you need more information, call a tool. If you have enough info, provide the final answer.
-3. **Observation**: After receiving tool results, analyze them and decide next step.
-
-Format your response EXACTLY like this:
-
-Thought: [your reasoning about what to do next]
-Action: [tool_call OR final_answer]
-
-When you have the final answer, respond with:
-Thought: [summary of reasoning]
-Final Answer: [your complete answer to the user]
-
-Always think step by step. Never skip the Thought step."""
-
-        messages = [{"role": "system", "content": react_system}]
-        messages.append({"role": "user", "content": query})
-
-        trace = []  # Reasoning trace for transparency
-        tools = tools or []
-        tool_executors = tool_executors or {}
-
-        for step in range(max_steps):
-            try:
-                # THINK + ACT: LLM generates thought and decides action
-                if tools and tool_executors:
-                    response = await asyncio.wait_for(
-                        llm.invoke_with_tools(messages, tools=tools), timeout=15
-                    )
-                else:
-                    response = await asyncio.wait_for(
-                        llm.invoke_messages(messages), timeout=15
-                    )
-            except (asyncio.TimeoutError, Exception) as e:
-                self.logger.warning(f"ReAct step {step} failed: {e}")
-                break
-
-            content = response.content or ""
-
-            # Parse thought from content
-            thought = ""
-            if "Thought:" in content:
-                thought = content.split("Thought:")[-1].split("Action:")[0].split("Final Answer:")[0].strip()
-
-            # Check for final answer
-            if "Final Answer:" in content:
-                final = content.split("Final Answer:")[-1].strip()
-                trace.append({"step": step + 1, "type": "final", "thought": thought, "answer": final})
-                return AgentResponse(
-                    type=AgentResponseType.SUCCESS,
-                    content={"answer": final, "steps": len(trace), "trace": trace},
-                    message="ReAct completed",
-                )
-
-            # Check for tool calls (from function calling)
-            if response.has_tool_calls:
-                for tc in response.tool_calls:
-                    trace.append({"step": step + 1, "type": "tool_call", "thought": thought, "tool": tc.name, "args": tc.args})
-
-                    executor = tool_executors.get(tc.name)
-                    if executor:
-                        try:
-                            result = await asyncio.wait_for(
-                                executor(**tc.args) if asyncio.iscoroutinefunction(executor)
-                                else asyncio.to_thread(executor, **tc.args),
-                                timeout=10,
-                            )
-                            result_str = str(result)
-                        except Exception as e:
-                            result_str = f"Error: {e}"
-                    else:
-                        result_str = f"Tool '{tc.name}' not available"
-
-                    trace.append({"step": step + 1, "type": "observation", "tool": tc.name, "result": result_str[:300]})
-                    self.logger.info(f"  ReAct [{step+1}] {tc.name} → {result_str[:60]}")
-
-                    # OBSERVE: inject result back
-                    messages.append({"role": "assistant", "content": f"Thought: {thought}\nAction: {tc.name}({tc.args})"})
-                    messages.append({"role": "user", "content": f"Observation: {result_str}"})
-                continue
-
-            # No tool call and no "Final Answer" — treat content as final
-            if content.strip():
-                trace.append({"step": step + 1, "type": "final", "thought": thought, "answer": content})
-                # Clean up — remove ReAct markers
-                clean = content
-                for marker in ["Thought:", "Action:", "Observation:"]:
-                    if marker in clean:
-                        clean = clean.split("Final Answer:")[-1] if "Final Answer:" in clean else clean
-                return AgentResponse(
-                    type=AgentResponseType.SUCCESS,
-                    content={"answer": clean.strip(), "steps": len(trace), "trace": trace},
-                    message="ReAct completed",
-                )
-
-        # Max steps reached
-        return AgentResponse(
-            type=AgentResponseType.SUCCESS,
-            content={"answer": content if content else "추론 단계를 초과했습니다.", "steps": len(trace), "trace": trace},
-            message=f"ReAct max steps ({max_steps}) reached",
-        )
 
     async def process(self, query: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
         """Process query
@@ -1059,199 +428,11 @@ Always think step by step. Never skip the Thought step."""
     def can_collaborate(self) -> bool:
         """Whether collaboration is possible"""
         return self._collaboration_service is not None
-
-    # ═══════════════════════════════════════════
     # Agent-to-Agent Communication (ACP built-in)
     # ═══════════════════════════════════════════
 
-    async def call_agent(
-        self,
-        agent_id: str,
-        query: str,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Call another agent by ID. Built into the framework — no imports needed.
 
-        Usage:
-            result = await self.call_agent("internet_agent", "오늘 서울 날씨")
-            if result["success"]:
-                answer = result["answer"]
 
-        Args:
-            agent_id: Target agent ID (e.g., 'internet_agent', 'calculator_agent')
-            query: Query string to send
-            context: Optional context dict
-
-        Returns:
-            {"success": bool, "answer": str, "agent_id": str}
-        """
-        if self._agent_registry is None:
-            self.logger.warning(f"call_agent: no registry available (not running in ACP context)")
-            return {"success": False, "answer": "에이전트 간 통신이 설정되지 않았습니다. ACP 서버에서 실행해주세요."}
-
-        target = self._agent_registry.get(agent_id)
-        if target is None:
-            available = list(self._agent_registry.keys())
-            self.logger.warning(f"call_agent: '{agent_id}' not found. Available: {available}")
-            return {"success": False, "answer": f"에이전트 '{agent_id}'를 찾을 수 없습니다."}
-
-        try:
-            caller_id = getattr(self, 'id', self.__class__.__name__)
-            self.logger.info(f"call_agent: {caller_id} → {agent_id}: {query[:50]}")
-
-            # Tracing: 자식 Span 생성
-            _span = None
-            try:
-                from logosai.utils.trace_span import TraceSpan
-                _span = TraceSpan.start(
-                    name=f"call_agent({agent_id})",
-                    agent_id=agent_id,
-                    input_text=query[:200],
-                )
-            except Exception:
-                pass
-
-            result = await target.process(query, context or {})
-
-            # Normalize response
-            if hasattr(result, 'content'):
-                answer = result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
-                if _span: _span.end(success=True, output=answer[:200])
-                return {"success": True, "answer": answer, "agent_id": agent_id}
-            elif isinstance(result, dict):
-                if _span: _span.end(success=True, output=str(result.get("answer", ""))[:200])
-                return {"success": True, "agent_id": agent_id, **result}
-            else:
-                if _span: _span.end(success=True, output=str(result)[:200])
-                return {"success": True, "answer": str(result), "agent_id": agent_id}
-
-        except Exception as e:
-            self.logger.error(f"call_agent to {agent_id} failed: {e}")
-            if _span: _span.end(success=False, output=str(e)[:200])
-            return {"success": False, "answer": f"에이전트 호출 실패: {e}", "agent_id": agent_id}
-
-    def available_agents(self) -> List[str]:
-        """List available agent IDs that can be called via call_agent().
-
-        Usage:
-            agents = self.available_agents()
-            # ['internet_agent', 'calculator_agent', 'llm_search_agent', ...]
-        """
-        if self._agent_registry is None:
-            return []
-        return list(self._agent_registry.keys())
-
-    # ═══════════════════════════════════════════
-    # Dynamic Sub-Agent + Team Delegation
-    # ═══════════════════════════════════════════
-
-    def spawn_agent(
-        self,
-        name: str,
-        description: str,
-        handler,
-        tools: List[Dict] = None,
-        tool_executors: Dict = None,
-    ) -> 'LogosAIAgent':
-        """Create a specialized sub-agent at runtime.
-
-        The spawned agent inherits this agent's LLM and registry.
-        No server restart needed — lives in memory.
-
-        Args:
-            name: Agent name
-            description: What this agent does
-            handler: async function(query, context) → AgentResponse
-            tools: Optional tool definitions
-            tool_executors: Optional tool executors
-
-        Returns:
-            New agent instance (also registered in agent_registry)
-
-        Example:
-            translator = self.spawn_agent(
-                "translator", "Translates text",
-                handler=my_translate_func,
-            )
-            result = await self.call_agent("translator", "Translate to English: 안녕")
-        """
-        from .simple_agent import SimpleAgent
-        from .agent_types import AgentResponse, AgentResponseType
-
-        parent = self
-
-        class SpawnedAgent(SimpleAgent):
-            agent_name = name
-            agent_description = description
-
-            async def handle(self_inner, query, context=None):
-                if asyncio.iscoroutinefunction(handler):
-                    result = await handler(query, context)
-                else:
-                    result = handler(query, context)
-                if isinstance(result, AgentResponse):
-                    return result
-                return AgentResponse.success(content={"answer": str(result)})
-
-        agent = SpawnedAgent()
-        # Inherit parent's LLM and registry
-        agent._llm = getattr(parent, '_llm', None)
-        agent.llm_client = getattr(parent, 'llm_client', getattr(parent, '_llm', None))
-        agent._agent_registry = parent._agent_registry
-
-        # Register tools
-        if tools and tool_executors:
-            for t in tools:
-                agent._tools.append(t)
-            agent._tool_executors.update(tool_executors)
-        elif parent.has_tools:
-            agent._tools = parent._tools.copy()
-            agent._tool_executors = parent._tool_executors.copy()
-
-        # Register in agent registry so other agents can call it
-        agent_id = name.lower().replace(" ", "_")
-        if parent._agent_registry is not None:
-            parent._agent_registry[agent_id] = agent
-
-        self.logger.info(f"Spawned sub-agent: {name} (id={agent_id})")
-        return agent
-
-    async def delegate(
-        self,
-        tasks: List[Dict[str, str]],
-        parallel: bool = True,
-    ) -> List[Dict[str, Any]]:
-        """Delegate multiple tasks to different agents and collect results.
-
-        Args:
-            tasks: List of {"agent_id": "...", "query": "..."}
-            parallel: Run tasks in parallel (True) or sequential (False)
-
-        Returns:
-            List of {"agent_id": str, "success": bool, "answer": str}
-
-        Example:
-            results = await self.delegate([
-                {"agent_id": "internet_agent", "query": "Tesla stock price"},
-                {"agent_id": "internet_agent", "query": "Apple stock price"},
-            ], parallel=True)
-        """
-        if parallel:
-            coros = [
-                self.call_agent(t["agent_id"], t["query"], t.get("context"))
-                for t in tasks
-            ]
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            return [
-                r if isinstance(r, dict) else {"success": False, "answer": str(r), "agent_id": tasks[i].get("agent_id", "")}
-                for i, r in enumerate(results)
-            ]
-        else:
-            results = []
-            for t in tasks:
-                r = await self.call_agent(t["agent_id"], t["query"], t.get("context"))
-                results.append(r)
-            return results
 
     # ═══════════════════════════════════════════
     # Human-in-the-Loop (SSE Bidirectional)
