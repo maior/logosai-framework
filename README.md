@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Build AI agents in 4 lines. Orchestrate 56+ agents. Self-evolving. Observable.**
+**Build AI agents in 4 lines. Orchestrate 63+ agents. Self-evolving. Observable.**
 
 LogosAI is a Python framework for building, orchestrating, and evolving AI agents. Create a single agent with minimal code, or build a multi-agent system where agents collaborate, debate, learn from each other, and improve themselves autonomously — with full observability via LogosPulse.
 
@@ -242,6 +242,27 @@ async for chunk in agent.ask_llm_stream("Tell me about AI"):
 
 **Capabilities**: Tool Use · ReAct · Memory (embedding search) · Goal Decomposition · Streaming · Structured Output · Error Recovery · Context Management
 
+### Document Generation — Desktop Native
+
+Generate professional documents through natural language:
+
+```
+"SpaceX 회사 정보를 PPT로 만들어줘"
+→ internet_agent (search) → pptx_generator_agent (generate)
+→ PowerPoint opens and builds slides in real-time
+
+"Docker 매뉴얼을 워드로 만들어줘"
+→ docx_generator_agent → Word document with tables, charts, metrics
+```
+
+| Feature | Details |
+|---------|---------|
+| **PPT Generation** | 101 themes × 15 layouts, Desktop Native (AppleScript) + python-pptx fallback |
+| **DOCX Generation** | 8 doc_types × 8 themes, Hybrid mode (python-docx tables + Desktop Native text) |
+| **Google Maps** | Place search + directions + interactive map rendering |
+| **File Search** | Spotlight + find + grep — local filesystem search with content matching |
+| **Capability Protocol** | Agent auto-composition via DAG (Level B composite + Level C autonomous) |
+
 ### Observability — LogosPulse
 
 OpenTelemetry-style tracing and metrics for every agent execution:
@@ -302,7 +323,7 @@ Agent fails → FailureLogger → 30% threshold → FORGE improves
 
 ### Desktop Agent
 
-Control your desktop through natural language — 56+ agents, each independent:
+Control your desktop through natural language — 63+ agents, each independent:
 
 ```
 desktop_agent (dynamic LLM router — no hardcoded routes)
@@ -380,7 +401,7 @@ cd ~/logosai
 |---------|------|-------------|
 | logos_web | 8010 | Next.js frontend — chat, [admin](/admin), auto reports, [architecture](/architecture) |
 | logos_api | 8090 | FastAPI backend — auth, streaming, memory, Telegram bot |
-| ACP Server | 8888 | Agent runtime — 56+ agents, self-evolution, L3/L4 |
+| ACP Server | 8888 | Agent runtime — 63+ agents, self-evolution, L3/L4, Desktop Native |
 | LogosPulse API | 8095 | Observability backend — execution traces, LLM metrics, costs |
 | LogosPulse UI | 8096 | Observability dashboard — span tree, feedback, learning loop |
 | PostgreSQL | 5432 | Database |
