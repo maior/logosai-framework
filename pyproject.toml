@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "logosai"
 version = "0.12.0"
-description = "Build AI agents in 4 lines. Personal AI agent framework — no server required."
+description = "Build AI agents in 4 lines. Personal AI agent framework — 63+ agents, self-evolving, observable."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
