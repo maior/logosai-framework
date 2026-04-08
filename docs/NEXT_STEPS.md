@@ -25,12 +25,12 @@
 
 ## 우선순위 1: 프레임워크 기능 강화
 
-### 1-1. Google 스트리밍 진정한 비동기화
-- **현황**: `llm_client.py`의 `_stream_google()`가 `run_in_executor()`로 동기 수집 후 yield — 첫 토큰이 전체 응답 생성 후에만 나옴
-- **목표**: async generator로 토큰 단위 실시간 스트리밍
-- **영향**: 사용자 체감 속도 직접 개선
-- **난이도**: 중 (2시간)
-- **위치**: `logosai/utils/llm_client.py` `_stream_google()` 메서드
+### 1-1. LLM 토큰 스트리밍 (필요 시)
+- **현황**: `invoke_stream()`이 버퍼링 방식이지만, 실전 에이전트 56개 중 사용하는 곳이 0개
+- **분석 결과**: 대부분 에이전트는 LLM 응답을 후처리(API 조합, DB 조회 등)하므로 토큰 스트리밍이 맞지 않음. SSE 이벤트 스트리밍(단계별 알림)이 현재 아키텍처에 적합
+- **적용 가능 에이전트**: `llm_search_agent` 등 LLM 응답 = 최종 결과인 경우만
+- **시기**: LLM 응답을 실시간으로 보여주는 ChatGPT 스타일 UX가 필요할 때
+- **방법**: `google.genai` `client.aio.models.generate_content_stream` (비동기 API 존재 확인됨)
 
 ### 1-2. LiteLLM 통합으로 LLM 프로바이더 확장
 - **현황**: 4개 프로바이더 (Google, OpenAI, Anthropic, Ollama)
@@ -79,11 +79,16 @@
 - **목표**: Quick Start, Architecture Guide, API Reference 업데이트
 - **영향**: 오픈소스 커뮤니티 진입 장벽 낮춤
 
-### 3-3. TypeScript SDK
-- **현황**: Python만 지원
-- **목표**: TypeScript/Node.js SDK (SimpleAgent 패턴)
-- **영향**: 프론트엔드 개발자 접근성 (Google ADK 4개 언어, OpenAI SDK 2개 대비)
-- **난이도**: 높 (1주+)
+### 3-3. Desktop 라이브러리 앱 컨트롤러 확장
+- **현황**: KakaoTalk, Gmail, Notion 3개 AppController + 5개 채널 구현 완료
+- **목표**: 새 앱 추가 시 AppController 서브클래스 구현 (Excel, PowerPoint, Finder 등)
+- **시기**: 새 데스크톱 에이전트 요구 시
+
+### 3-4. 기업 제안 프레젠테이션 관리
+- **현황**: 5개 기업별 맞춤 HTML 프레젠테이션 완성 (docs/)
+- **대상**: 기술팀 일반, 은행(EY), 보험연수원, AIA생명, 에스원
+- **원칙**: 컨설팅 형태 (As-Is→Gap→To-Be→시나리오→TCO→리스크→로드맵), 구체적 금액 미포함
+- **시기**: 신규 기업 제안 시 해당 기업 맞춤 버전 생성
 
 ---
 
