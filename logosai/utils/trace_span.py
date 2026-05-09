@@ -123,3 +123,76 @@ def get_current_trace_id() -> Optional[str]:
 
 def get_current_span_id() -> Optional[str]:
     return _current_span_id.get()
+
+
+# ──────────────────────────────────────────────────────────────────
+# W3C Trace Context propagation (2026-05-09, Phase 4b)
+# ──────────────────────────────────────────────────────────────────
+# logos_api 가 ACP 호출 시 보내는 `traceparent` HTTP header 를 ACP 측이
+# 받아서 같은 trace_id 로 span 기록 → cross-service trace tree 통합.
+# ──────────────────────────────────────────────────────────────────
+
+
+def parse_traceparent(header: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """W3C traceparent header → (trace_id_uuid, parent_span_id).
+
+    Format: 00-{32hex_trace}-{16hex_span}-{flags}
+
+    Returns:
+        (trace_id, span_id) — UUID 형식의 trace_id 와 16hex span_id
+        잘못된 format 이면 (None, None)
+    """
+    if not header or not isinstance(header, str):
+        return (None, None)
+    parts = header.strip().split("-")
+    if len(parts) != 4:
+        return (None, None)
+    version, tid_hex, sid_hex, _flags = parts
+    if version != "00" or len(tid_hex) != 32 or len(sid_hex) != 16:
+        return (None, None)
+    # validate hex
+    try:
+        int(tid_hex, 16)
+        int(sid_hex, 16)
+    except ValueError:
+        return (None, None)
+    # 32 hex → UUID 형식 (8-4-4-4-12) 으로 정규화
+    trace_id = (
+        f"{tid_hex[0:8]}-{tid_hex[8:12]}-{tid_hex[12:16]}-"
+        f"{tid_hex[16:20]}-{tid_hex[20:32]}"
+    )
+    return (trace_id, sid_hex)
+
+
+class TraceContext:
+    """ContextVar 에 외부 trace_id 를 set/reset 하는 context manager.
+
+    Usage:
+        trace_id, parent_id = parse_traceparent(request.headers.get("traceparent"))
+        with TraceContext(trace_id, parent_id):
+            # 이 블록 안에서 시작하는 모든 TraceSpan 이 외부 trace 이어받음
+            span = TraceSpan.start("agent.process", agent_id="x")
+            ...
+            span.end()
+
+    None 입력은 no-op (기존 동작 유지).
+    """
+
+    def __init__(self, trace_id: Optional[str] = None, parent_id: Optional[str] = None):
+        self._trace_id = trace_id
+        self._parent_id = parent_id
+        self._token_trace = None
+        self._token_span = None
+
+    def __enter__(self) -> 'TraceContext':
+        if self._trace_id:
+            self._token_trace = _current_trace_id.set(self._trace_id)
+        if self._parent_id:
+            self._token_span = _current_span_id.set(self._parent_id)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if self._token_span is not None:
+            _current_span_id.reset(self._token_span)
+        if self._token_trace is not None:
+            _current_trace_id.reset(self._token_trace)
