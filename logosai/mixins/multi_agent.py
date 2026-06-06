@@ -59,7 +59,13 @@ class MultiAgentMixin:
             result = await target.process(query, context or {})
 
             if hasattr(result, 'content'):
-                answer = result.content.get("answer", "") if isinstance(result.content, dict) else str(result.content)
+                if isinstance(result.content, dict):
+                    answer = result.content.get("answer", "")
+                    if _span: _span.end(success=True, output=str(answer)[:200])
+                    # content 전체 보존(협업: products/citations/breakdown/weights 등).
+                    # 명시 키(success/agent_id/answer)를 마지막에 둬 하위호환·일관성 보장.
+                    return {**result.content, "success": True, "agent_id": agent_id, "answer": answer}
+                answer = str(result.content)
                 if _span: _span.end(success=True, output=answer[:200])
                 return {"success": True, "answer": answer, "agent_id": agent_id}
             elif isinstance(result, dict):
