@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LogosAI 표준 프로토콜 샘플 가이드 — MCP · A2A</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body { font-family:'Inter','Pretendard',system-ui,sans-serif; background:#080c14; color:#c8d0dc;
+         -webkit-font-smoothing:antialiased; overflow:hidden; }
+  .deck { height:100vh; overflow-y:auto; scroll-snap-type:y mandatory; scroll-behavior:smooth; }
+  .slide { min-height:100vh; scroll-snap-align:start; display:flex; flex-direction:column;
+           justify-content:center; padding:60px 8vw; border-bottom:1px solid #10182a; position:relative; }
+  .label { font-size:0.7rem; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:#4a9aea; margin-bottom:18px; }
+  h1 { font-size:3.2rem; font-weight:800; line-height:1.12; color:#eef1f6; letter-spacing:-0.02em; }
+  h2 { font-size:2.2rem; font-weight:750; color:#eef1f6; letter-spacing:-0.01em; margin-bottom:14px; }
+  h3 { font-size:1.02rem; font-weight:600; color:#dce3ed; margin-bottom:8px; }
+  .sub { font-size:1.12rem; color:#8896aa; max-width:900px; margin-top:14px; line-height:1.7; }
+  .blue{color:#56b3fa;} .green{color:#34d399;} .amber{color:#fbbf24;} .rose{color:#fb7185;}
+  .hl{color:#f0f4f8;font-weight:600;} .muted{color:#67748a;}
+  .grid { display:grid; gap:16px; margin-top:30px; }
+  .g2{grid-template-columns:1fr 1fr;} .g3{grid-template-columns:1fr 1fr 1fr;} .g4{grid-template-columns:repeat(4,1fr);}
+  .card { background:#0d1424; border:1px solid #1a2438; border-radius:12px; padding:20px; }
+  .card p { font-size:0.88rem; color:#8896aa; margin-top:6px; line-height:1.6; }
+  .card .num { font-size:1.9rem; font-weight:800; color:#56b3fa; }
+  .box { border-radius:10px; padding:11px 15px; font-size:0.82rem; text-align:center; }
+  .b-ext{background:#131a2c;border:1px solid #2a3a58;color:#aebdd4;}
+  .b-blue{background:#0c2135;border:1px solid #1e5a8a;color:#7cc3f7;}
+  .b-green{background:#0d2b21;border:1px solid #1c6b4e;color:#5fd9a8;}
+  .b-core{background:#101828;border:1px solid #223050;color:#c8d0dc;}
+  .b-warn{background:#2b1d0e;border:1px solid #6b4a1c;color:#f5c46a;}
+  .arrow{text-align:center;color:#3d4a63;font-size:1.05rem;line-height:1.8;}
+  .flow{display:flex;align-items:stretch;} .flow .arrow{display:flex;align-items:center;padding:0 10px;}
+  .diagram{background:#0a101d;border:1px solid #1a2438;border-radius:14px;padding:24px;margin-top:26px;}
+  pre{background:#0a101d;border:1px solid #1a2438;border-radius:10px;padding:16px 20px;overflow-x:auto;
+      margin-top:16px;font-size:0.78rem;line-height:1.65;font-family:'SF Mono',Menlo,monospace;color:#a8b8d0;}
+  pre .c{color:#4d5a72;} pre .k{color:#7cc3f7;} pre .s{color:#5fd9a8;} pre .f{color:#fbbf24;}
+  code{background:#131a2c;border:1px solid #223050;border-radius:5px;padding:1px 7px;font-size:0.82em;color:#8fc7f5;font-family:'SF Mono',Menlo,monospace;}
+  table{width:100%;border-collapse:collapse;margin-top:20px;font-size:0.86rem;}
+  th{text-align:left;padding:9px 13px;color:#8fa0ba;font-weight:600;border-bottom:2px solid #223050;font-size:0.76rem;letter-spacing:0.5px;text-transform:uppercase;}
+  td{padding:10px 13px;border-bottom:1px solid #141c2c;vertical-align:top;}
+  .badge{display:inline-block;font-size:0.66rem;font-weight:700;letter-spacing:1px;padding:3px 11px;border-radius:20px;margin-left:10px;vertical-align:middle;}
+  .bg-green{background:#0d2b21;color:#34d399;border:1px solid #1c6b4e;}
+  .pager{position:fixed;right:26px;bottom:22px;font-size:0.75rem;color:#4d5a72;background:#0d1424cc;
+         border:1px solid #1a2438;border-radius:20px;padding:6px 14px;z-index:10;}
+  .hint{position:fixed;left:26px;bottom:22px;font-size:0.72rem;color:#3d4a63;z-index:10;}
+  .callout{background:#0c1a2e;border-left:3px solid #2f7fc4;border-radius:0 10px 10px 0;padding:14px 18px;margin-top:20px;font-size:0.9rem;color:#a8bcd4;}
+  .callout.gr{background:#0c2118;border-left-color:#26996b;}
+  @media (max-width:900px){ .g2,.g3,.g4{grid-template-columns:1fr;} h1{font-size:2.1rem;} .slide{padding:50px 6vw;} }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+<!-- S1 표지 -->
+<section class="slide">
+  <div class="label">LogosAI · Standard Protocols · Samples Guide</div>
+  <h1>MCP · A2A 표준 프로토콜<br><span class="blue">샘플 & 통합 가이드</span>
+  <span class="badge bg-green" style="font-size:0.8rem;">✅ 실행 검증 완료 2026-07-02</span></h1>
+  <p class="sub">ACP 서버에 <span class="hl">환경변수 옵션만으로</span> 업계 표준 MCP·A2A를 양방향 제공한다.
+  이 덱은 <code>logosai/samples/standard_protocols/</code>의 실행 가능한 샘플로
+  <span class="hl">외부 표준 시스템을 만들고 → ACP가 편입해 호출하고 → 반대로 ACP를 표준으로 소비하는</span>
+  전 과정을 설명한다.</p>
+  <div class="grid g4">
+    <div class="card"><div class="num">2</div><p>외부 역할 샘플 서버<br>(MCP·A2A)</p></div>
+    <div class="card"><div class="num">2</div><p>표준 클라이언트 샘플<br>(ACP 소비)</p></div>
+    <div class="card"><div class="num">1</div><p>통합 데모 스크립트<br>(전 과정 자동 시연)</p></div>
+    <div class="card"><div class="num">0줄</div><p>외부 N개 연동 시<br>개별 통합 코드</p></div>
+  </div>
+</section>
+
+<!-- S2 문제와 해법 -->
+<section class="slide">
+  <div class="label">01 · Why</div>
+  <h2>왜 표준인가 — 그리고 왜 게이트웨이인가</h2>
+  <div class="grid g2">
+    <div class="card"><h3 class="rose">문제</h3>
+      <p><b>표준을 써도 통합 비용이 선형 증가한다.</b><br><br>
+      외부에 MCP로 만든 도구 서버가 3개, A2A로 만든 파트너 에이전트가 2개라면?
+      전통적 접근은 시스템마다 클라이언트 코드를 따로 작성한다 — 표준의 취지가 반감된다.
+      호출하는 쪽도 "이건 MCP니까 tools/call, 저건 A2A니까 message/send"를 알아야 한다.</p></div>
+    <div class="card"><h3 class="green">해법 — ACP 게이트웨이</h3>
+      <p><b>선언 1항목 = 편입 완료. 호출자는 프로토콜을 모른다.</b><br><br>
+      외부 엔드포인트를 JSON 한 항목으로 선언하면 ACP가 discovery(tools/list · agent-card)를
+      수행해 <span class="hl">가상 에이전트</span>로 자동 편입한다. 이후 호출 문법은 로컬 에이전트와
+      완전히 동일하고, 프로토콜 전환은 Driver 내부에서 자동으로 일어난다.</p></div>
+  </div>
+  <pre><span class="c"># 세 호출의 문법이 완전히 동일하다 — 이것이 "자동전환"의 정의</span>
+<span class="k">await</span> internal_call(<span class="s">"sample_tools"</span>,    <span class="s">"3 더하기 5는?"</span>)      <span class="c"># → 실제로는 MCP tools/call</span>
+<span class="k">await</span> internal_call(<span class="s">"partner_summary"</span>, <span class="s">"…요약해줘"</span>)          <span class="c"># → 실제로는 A2A message/send</span>
+<span class="k">await</span> internal_call(<span class="s">"file_agent"</span>,      <span class="s">"CLAUDE.md 찾아줘"</span>)   <span class="c"># → 로컬 에이전트 (기존)</span></pre>
+</section>
+
+<!-- S3 전체 아키텍처 -->
+<section class="slide">
+  <div class="label">02 · Architecture</div>
+  <h2>전체 아키텍처 — 두 개의 경계, 하나의 실행 관문</h2>
+  <p class="sub">내부는 아무것도 바뀌지 않는다. 어댑터는 <b class="blue">표준 노출(Expose)</b>과
+  <b class="green">표준 소비(Consume)</b> 두 경계에서 포맷만 번역하며, 모든 실행은
+  검증된 단일 관문 <code>internal_call</code>을 지난다.</p>
+  <div class="diagram">
+    <div class="grid g2" style="gap:12px;">
+      <div class="box b-ext">MCP·A2A 클라이언트 (외부)<br><span class="muted" style="font-size:0.7rem">Claude Code · IDE · 파트너 에이전트</span></div>
+      <div class="box b-ext">기존 클라이언트<br><span class="muted" style="font-size:0.7rem">logos_api · logos_web (무변경)</span></div>
+    </div>
+    <div class="arrow">│ <span class="blue">Expose: /mcp · /a2a · agent-card</span>  │  /jsonrpc · /stream (기존)<br>▼</div>
+    <div class="box b-core" style="border-color:#2f5a8a;"><b>ACP SERVER</b> — 표준 어댑터(★신규, flag 기본 off) + 기존 핸들러
+      <br><span style="font-size:0.72rem" class="muted">mcp_adapter · a2a_adapter · schema_mapper · task_store</span></div>
+    <div class="arrow">▼ internal_call (단일 실행 관문 — 트레이싱·에러처리 기존 그대로)</div>
+    <div class="grid g2" style="gap:12px;">
+      <div class="box b-core">86+ 로컬 에이전트<br><span style="font-size:0.7rem" class="muted">에이전트 코드 수정 0</span></div>
+      <div class="box b-green">★ 가상 에이전트 (ExternalAgentProxy)<br><span style="font-size:0.7rem">"sample_tools"(MCP) · "partner_summary"(A2A)</span></div>
+    </div>
+    <div class="grid g2" style="gap:12px;">
+      <div></div>
+      <div class="arrow">│ <span class="green">Consume: Driver 자동전환</span><br>▼</div>
+    </div>
+    <div class="grid g2" style="gap:12px;">
+      <div></div>
+      <div class="box b-ext">외부 MCP 서버(:8901) · 외부 A2A 에이전트(:8902)<br><span class="muted" style="font-size:0.7rem">← 이 폴더의 샘플이 이 역할</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- S4 Consume 상대역 샘플 -->
+<section class="slide">
+  <div class="label">03 · Samples — 외부 시스템 역할</div>
+  <h2>샘플 서버 2개 — "편입될 외부 시스템"을 직접 만들어 본다</h2>
+  <div class="grid g2">
+    <div class="card"><h3 class="blue">mcp_server_sample.py <span class="muted">(:8901)</span></h3>
+      <p>MCP Streamable HTTP 최소 구현 — <code>POST /mcp</code>에 JSON-RPC
+      (initialize / tools/list / tools/call).<br><br>
+      도구 2개:<br>
+      ▸ <code>add(a, b)</code> — 결정적 계산 데모<br>
+      ▸ <code>get_grid_forecast(nx, ny)</code> — <b class="amber">필수 인자가 있는 도구</b>.
+      자연어에 좌표가 없으면 ACP가 <b>되묻기(input-required)</b>를 발동시키는 시나리오의 주인공.</p></div>
+    <div class="card"><h3 class="blue">a2a_server_sample.py <span class="muted">(:8902)</span></h3>
+      <p>A2A 최소 구현 — <code>GET /.well-known/agent-card.json</code>(discovery) +
+      <code>POST /a2a</code>의 message/send → Task 반환.<br><br>
+      "파트너사 문서 요약 에이전트" 역할: 받은 텍스트를 한 줄 요약으로 가공.
+      실제 파트너 조직의 A2A 에이전트가 이 자리에 오면 ACP는 <b>선언 1항목으로 동일하게 편입</b>한다.</p></div>
+  </div>
+  <h3 style="margin-top:28px;">편입 선언 — external_endpoints.sample.json</h3>
+  <pre>{ <span class="k">"endpoints"</span>: [
+  { <span class="k">"id"</span>: <span class="s">"sample_tools"</span>,    <span class="k">"protocol"</span>: <span class="s">"mcp"</span>, <span class="k">"url"</span>: <span class="s">"http://localhost:8901/mcp"</span>, <span class="k">"enabled"</span>: <span class="f">true</span> },
+  { <span class="k">"id"</span>: <span class="s">"partner_summary"</span>, <span class="k">"protocol"</span>: <span class="s">"a2a"</span>, <span class="k">"url"</span>: <span class="s">"http://localhost:8902"</span>,     <span class="k">"enabled"</span>: <span class="f">true</span> } ] }</pre>
+  <div class="callout gr">이 JSON이 통합 작업의 <b>전부</b>다. ACP 기동 시 discovery가 자동 수행되어
+  <code>list_agents</code>에 type <code>EXTERNAL</code> 가상 에이전트로 나타난다 — 라우팅·조합·gap감지·트레이싱이 즉시 적용된다.</div>
+</section>
+
+<!-- S5 Consume 흐름 -->
+<section class="slide">
+  <div class="label">04 · Consume Flow</div>
+  <h2>ACP가 외부를 호출하는 법 — 프로토콜 자동전환</h2>
+  <p class="sub">사용자·에이전트·오케스트레이터 누구든 <code>agent_id</code>만 알면 된다.
+  아래는 통합 데모의 실측 흐름이다 (2026-07-02).</p>
+  <div class="diagram">
+    <div class="flow">
+      <div class="box b-core" style="flex:1.1">호출자<br><span style="font-size:0.7rem" class="muted">query("sample_tools",<br>"3 더하기 5는?")</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-green" style="flex:1.2">ExternalAgentProxy<br><span style="font-size:0.7rem">LLM 도구선택+인자추출<br>(query-only면 LLM 생략)</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-blue" style="flex:1">McpDriver<br><span style="font-size:0.7rem">tools/call<br>{a:3, b:5}</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-ext" style="flex:1">외부 MCP<br><span style="font-size:0.7rem">:8901</span></div>
+    </div>
+    <div class="arrow" style="margin:6px 0;">응답: <span class="green">"3 + 5 = 8"</span> (실측)</div>
+    <div class="flow" style="margin-top:10px;">
+      <div class="box b-core" style="flex:1.1">호출자<br><span style="font-size:0.7rem" class="muted">query("partner_summary",<br>"…요약해줘")</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-green" style="flex:1.2">ExternalAgentProxy<br><span style="font-size:0.7rem">synthetic "message" 도구<br>(A2A는 자연어가 규약 → LLM 불필요)</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-blue" style="flex:1">A2aDriver<br><span style="font-size:0.7rem">message/send<br>→ Task 대기</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-ext" style="flex:1">외부 A2A<br><span style="font-size:0.7rem">:8902</span></div>
+    </div>
+    <div class="arrow" style="margin-top:6px;">응답: <span class="green">"[요약] LogosAI는 멀티에이전트 오케스트레이션 시스템으로 … (원문 12단어)"</span> (실측)</div>
+  </div>
+  <div class="callout">두 흐름의 <b>왼쪽 절반(호출자→프록시)은 완전히 동일</b>하다 — 다른 것은 Driver뿐.
+  새 표준(예: 향후 ANP)이 나와도 Driver 1개만 추가하면 전체 생태계가 그대로 재사용된다.
+  장애 시엔 endpoint별 CircuitBreaker가 열려 외부 장애가 내부 라우팅으로 전파되지 않는다.</div>
+</section>
+
+<!-- S6 되묻기 -->
+<section class="slide">
+  <div class="label">05 · Ask-and-Retry</div>
+  <h2>되묻기 — 모르면 지어내지 않고 묻는다</h2>
+  <p class="sub"><code>get_grid_forecast</code>는 nx/ny가 필수인데 "격자 예보 알려줘"에는 좌표가 없다.
+  시스템은 <b class="rose">조용한 기본값으로 날조하지 않고</b> A2A 표준 <code>input-required</code> 태스크로
+  <b class="green">구조화된 질문</b>을 되돌려준다. 답이 오면 보존된 컨텍스트와 병합해 이어서 실행한다.</p>
+  <div class="diagram">
+    <div class="flow">
+      <div class="box b-ext" style="flex:1.1">① "격자 예보 알려줘"<br><span style="font-size:0.68rem" class="muted">(좌표 없음)</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-green" style="flex:1.1">② LLM 인자 매핑<br><span style="font-size:0.68rem">날조 금지 프롬프트<br>→ nx/ny <b>생략</b></span></div>
+      <div class="arrow">→</div>
+      <div class="box b-warn" style="flex:1.4">③ Task: input-required<br><span style="font-size:0.68rem">fields = [nx:number, ny:number]<br>+ resume 컨텍스트 보존</span></div>
+    </div>
+    <div class="flow" style="margin-top:10px;">
+      <div class="box b-ext" style="flex:1.1">④ 같은 taskId로 답<br><span style="font-size:0.68rem" class="muted">data part {nx:60, ny:127}</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-green" style="flex:1.1">⑤ 병합 → 외부 도구 실행<br><span style="font-size:0.68rem">LLM 불필요 (결정적)</span></div>
+      <div class="arrow">→</div>
+      <div class="box b-green" style="flex:1.4">⑥ Task: completed<br><span style="font-size:0.68rem">"격자(60,127) 예보: 맑음, 26.5°C" (실측)</span></div>
+    </div>
+  </div>
+  <div class="grid g3">
+    <div class="card"><h3>A2A 표면</h3><p><code>input-required</code>(비종결) + taskId continuation — <b>표준 네이티브</b></p></div>
+    <div class="card"><h3>MCP 표면</h3><p>stateless — <code>isError</code> + <code>structuredContent.needs_input</code> → 인자 채워 재호출</p></div>
+    <div class="card"><h3>웹 UI (예약)</h3><p>질문 필드가 InteractionField와 동일 형태 — 기존 form 다이얼로그에 변환 0으로 투입</p></div>
+  </div>
+</section>
+
+<!-- S7 Expose -->
+<section class="slide">
+  <div class="label">06 · Expose Flow</div>
+  <h2>반대 방향 — 외부가 ACP를 표준으로 소비한다</h2>
+  <p class="sub">같은 ACP가 동시에 MCP 서버이자 A2A 에이전트다. 86+ 에이전트가
+  <code>agents.json</code> 메타데이터에서 자동 파생되어 노출된다 — 에이전트 코드 수정 0.</p>
+  <div class="grid g2">
+    <div class="card"><h3 class="blue">mcp_client_sample.py</h3>
+      <p>표준 MCP 클라이언트 시퀀스:<br>
+      ① initialize (핸드셰이크)<br>② notifications/initialized (202)<br>
+      ③ tools/list → <code>acp_query</code> (router 모드: 도구 1개가 86+ 에이전트의 관문)<br>
+      ④ tools/call — agent_id 직접 지정<br>⑤ tools/call — 자동 라우팅 (TaskClassifier)<br><br>
+      가장 짧은 실전: <code>claude mcp add --transport http logosai http://localhost:8888/mcp</code></p></div>
+    <div class="card"><h3 class="blue">a2a_client_sample.py</h3>
+      <p>외부 조직 에이전트의 협업 시퀀스:<br>
+      ① agent-card discovery — 카드 하나로 skills 전부 파악 (편입된 외부 시스템도 skill로 노출: 실측 119개)<br>
+      ② message/send → Task(completed) + artifacts(text·data)<br>
+      ③ tasks/get — TTL 내 조회<br>
+      ④ 되묻기 — input-required → continuation (S6의 클라이언트 측)</p></div>
+  </div>
+  <div class="callout gr">보안: 기본 flag off(라우트 자체가 없음) · <code>ACP_STANDARD_API_KEY</code>로 Bearer 강제 가능 ·
+  관리 메서드(hot_register 등)는 표준 표면에서 -32601로 차단(테스트로 고정).</div>
+</section>
+
+<!-- S8 실행법 -->
+<section class="slide">
+  <div class="label">07 · Run It</div>
+  <h2>직접 실행 — 3개 터미널이면 끝</h2>
+  <pre><span class="c"># 터미널 1 — ACP를 표준 flag + 샘플 편입 선언으로 기동</span>
+cd &lt;repo&gt;/acp_server
+<span class="f">ACP_ENABLE_MCP</span>=true <span class="f">ACP_ENABLE_A2A</span>=true <span class="f">ACP_ENABLE_EXTERNAL</span>=true \
+  <span class="f">ACP_EXTERNAL_CONFIG</span>=&lt;repo&gt;/logosai/samples/standard_protocols/external_endpoints.sample.json \
+  python standalone_acp_server.py --port 8899 --enable-auto-agent-selection
+
+<span class="c"># 터미널 2 — 외부 역할 샘플 서버 2개</span>
+cd &lt;repo&gt;/logosai/samples/standard_protocols
+<span class="f">PORT</span>=8901 python mcp_server_sample.py &amp;
+<span class="f">PORT</span>=8902 python a2a_server_sample.py &amp;
+
+<span class="c"># 터미널 3 — 통합 데모 (Consume 2종 + 되묻기 + Expose 자동 시연)</span>
+<span class="f">ACP_URL</span>=http://localhost:8899 python acp_integration_demo.py</pre>
+  <table>
+    <tr><th>파일</th><th>역할</th></tr>
+    <tr><td><code>mcp_server_sample.py</code> / <code>a2a_server_sample.py</code></td><td>편입될 외부 시스템 (Consume 상대역)</td></tr>
+    <tr><td><code>external_endpoints.sample.json</code></td><td>편입 선언 — 통합 작업의 전부</td></tr>
+    <tr><td><code>mcp_client_sample.py</code> / <code>a2a_client_sample.py</code></td><td>ACP를 표준으로 소비 (Expose 방향)</td></tr>
+    <tr><td><code>acp_integration_demo.py</code></td><td>전 과정 자동 시연 + 미구성 시 안내</td></tr>
+  </table>
+</section>
+
+<!-- S9 실측 결과 -->
+<section class="slide">
+  <div class="label">08 · Verified</div>
+  <h2>실측 결과 — 2026-07-02 전 구간 검증</h2>
+  <div class="grid g2">
+    <div class="card"><h3 class="green">이 데모 (샘플 대상)</h3>
+      <p>✔ 편입: sample_tools(mcp, tools=2) · partner_summary(a2a, tools=1)<br>
+      ✔ Consume MCP: "3 더하기 5" → <b>"3 + 5 = 8"</b><br>
+      ✔ Consume A2A: 요약 요청 → <b>"[요약] … (원문 12단어)"</b><br>
+      ✔ 되묻기: input-required → fields[nx,ny] → continuation → <b>"격자(60,127) 예보: 맑음, 26.5°C"</b><br>
+      ✔ Expose: /mcp initialize + agent-card skills 119 (외부 편입분 포함)</p></div>
+    <div class="card"><h3 class="green">플랫폼 전체 (표준 어댑터)</h3>
+      <p>✔ TDD 유닛 <b>60 테스트</b> (8파일) — 매 단계 전체 통합 회귀<br>
+      ✔ 실 MCP 클라이언트: Claude Code <b>✔ Connected</b><br>
+      ✔ 셀프 루프백 (단일 인스턴스 노출↔소비 관통)<br>
+      ✔ 두 인스턴스 연합 (ACP-B →[A2A]→ ACP-A 실행)<br>
+      ✔ 크로스 프로토콜 스트림 (한 요청이 3개 표준 표면 관통)<br>
+      ✔ flag off = 라우트 0 (완전 no-op, 기존 시스템 회귀 0)</p></div>
+  </div>
+  <div class="callout">상세: <code>docs/MCP_A2A_USAGE_GUIDE.md</code>(사용법·트러블슈팅) ·
+  <code>docs/MCP_A2A_ARCHITECTURE.md</code>(설계 결정 D1~D16) ·
+  <code>docs/logosai-mcp-a2a-architecture.html</code>(전체 아키텍처 프레젠테이션)</div>
+</section>
+
+<!-- S10 요약 -->
+<section class="slide">
+  <div class="label">09 · Summary</div>
+  <h2>요약 — 표준은 경계에, 지능은 내부에</h2>
+  <div class="grid g3">
+    <div class="card"><h3 class="blue">Expose</h3><p>86+ 에이전트가 agents.json에서 자동 파생되어 MCP 도구·A2A 스킬로 노출.
+    어떤 벤더의 LLM 앱이든 표준만 지원하면 연동 — <b>모델 비종속</b>.</p></div>
+    <div class="card"><h3 class="green">Consume</h3><p>외부 표준 시스템 N개 = 선언 N항목 + 코드 0줄.
+    호출 문법은 로컬과 동일, 프로토콜 전환은 Driver가. 라우팅·조합·gap감지·트레이싱 자동 적용.</p></div>
+    <div class="card"><h3 class="amber">신뢰</h3><p>모르면 지어내지 않고 묻는다(되묻기) ·
+    외부 장애는 CircuitBreaker로 격리 · 외부 응답은 데이터로만 취급 · 기본 off로 회귀 0.</p></div>
+  </div>
+  <p class="sub" style="margin-top:34px;">이 폴더의 샘플은 그대로 복사해 실제 외부 시스템의 골격으로 써도 된다 —
+  <code>mcp_server_sample.py</code>에 도구를 채우면 그 순간 LogosAI의 에이전트가 된다.</p>
+</section>
+
+</div>
+<div class="pager" id="pager">1 / 10</div>
+<div class="hint">←/→ 또는 스크롤로 이동</div>
+<script>
+  const deck = document.getElementById('deck');
+  const slides = [...document.querySelectorAll('.slide')];
+  const pager = document.getElementById('pager');
+  function current() {
+    return Math.round(deck.scrollTop / window.innerHeight);
+  }
+  function go(i) {
+    const idx = Math.max(0, Math.min(slides.length - 1, i));
+    slides[idx].scrollIntoView({behavior: 'smooth'});
+  }
+  document.addEventListener('keydown', (e) => {
+    if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); go(current() + 1); }
+    if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); go(current() - 1); }
+  });
+  deck.addEventListener('scroll', () => { pager.textContent = `${current() + 1} / ${slides.length}`; });
+</script>
+</body>
+</html>
