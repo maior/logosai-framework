@@ -491,6 +491,7 @@ class LLMClient:
                         name=f"llm.{self.model}",
                         agent_id="",
                         input_text=_prompt_preview,
+                        stage="llm",
                     )
                     # start_time을 실제 호출 시작으로 보정
                     _llm_span.start_time = _start_time

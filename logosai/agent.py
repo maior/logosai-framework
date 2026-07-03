@@ -19,7 +19,7 @@ from typing import Dict, Any, Optional, Union, List, Tuple, TYPE_CHECKING
 from .agent_types import AgentType, AgentResponse, AgentResponseType
 from .config import AgentConfig
 from loguru import logger
-from .mixins import ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin, HttpToolMixin
+from .mixins import ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin, HttpToolMixin, StandardExportMixin
 
 if TYPE_CHECKING:
     from .collaboration import CollaborationService, CollaborationResult, AgentCapability
@@ -53,7 +53,7 @@ def _lazy_import_query_optimizer():
 # Logging setup
 logger = logging.getLogger(__name__)
 
-class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin, HttpToolMixin):
+class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin, HttpToolMixin, StandardExportMixin):
     """LogosAI Agent Base Class - Conditional Agentic AI Support
 
     Agentic 기능은 Mixin으로 분리되어 있음:

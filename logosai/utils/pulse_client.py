@@ -51,9 +51,15 @@ async def send_execution(
     token_count: int = 0,
     cost_usd: float = 0.0,
     metadata: Optional[Dict[str, Any]] = None,
+    execution_id: Optional[str] = None,  # N1 (2026-05-09): TraceSpan trace_id 로 link
 ) -> None:
-    """에이전트 실행 기록 전송."""
-    await _post("/api/v1/ingest/execution", {
+    """에이전트 실행 기록 전송.
+
+    N1: execution_id 를 명시 지정하면 LogosPulse 가 그 UUID 로 execution 저장.
+    그러면 같은 trace_id 를 가진 span 들이 /traces/{execution_id}/tree 에서 조회 가능.
+    None 이면 LogosPulse 가 자동 UUID 생성 (legacy 호환).
+    """
+    payload = {
         "agent_id": agent_id,
         "query": query[:200],
         "success": success,
@@ -66,7 +72,10 @@ async def send_execution(
         "token_count": token_count,
         "cost_usd": cost_usd,
         "metadata": metadata,
-    })
+    }
+    if execution_id:
+        payload["execution_id"] = execution_id
+    await _post("/api/v1/ingest/execution", payload)
 
 
 async def send_llm_call(
@@ -125,6 +134,8 @@ async def send_span(
     output_text: str = "",
     duration_ms: float = 0,
     metadata: Optional[Dict[str, Any]] = None,
+    start_time: float = 0,
+    end_time: float = 0,
 ) -> None:
     """트레이스 Span 전송."""
     await _post("/api/v1/ingest/span", {
@@ -134,11 +145,33 @@ async def send_span(
         "name": name,
         "agent_id": agent_id,
         "status": status,
+        "start_time": start_time or None,  # epoch sec — 여정 타임라인용 실측 시각
+        "end_time": end_time or None,
         "input_text": input_text[:200],
         "output_text": output_text[:200],
         "duration_ms": duration_ms,
         "metadata": metadata or {},
     })
+
+
+async def send_conversation(
+    trace_id: str = "", caller: str = "", callee: str = "", channel: str = "call_agent",
+    query: str = "", answer: str = "", status: str = "success",
+    duration_ms: float = 0, started_at: float = 0, session_id: str = "",
+) -> None:
+    """에이전트 간 대화 로그 — 스팬과 분리된 1급 기록 (전문 보존, 취소돼도 남김)."""
+    await _post("/api/v1/ingest/conversation", {
+        "trace_id": trace_id, "caller": caller, "callee": callee, "channel": channel,
+        "query": query[:4000], "answer": answer[:4000], "status": status,
+        "duration_ms": duration_ms, "started_at": started_at or None, "session_id": session_id,
+    })
+
+
+def send_conversation_bg(**kwargs) -> None:
+    try:
+        asyncio.ensure_future(send_conversation(**kwargs))
+    except Exception:
+        pass
 
 
 def send_span_bg(**kwargs) -> None:

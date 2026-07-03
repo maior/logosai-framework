@@ -29,6 +29,7 @@ Driver가 자동으로 전환한다. 외부 시스템이 N개여도 통합 코�
 | `mcp_client_sample.py` | Expose | ACP의 `/mcp`를 소비하는 표준 MCP 클라이언트 (initialize→tools/list→tools/call, 직접 지정+자동 라우팅) |
 | `a2a_client_sample.py` | Expose | ACP의 agent-card discovery + message/send + tasks/get + **되묻기 continuation** |
 | `acp_integration_demo.py` | 통합 | 전 과정 데모 — 샘플 서버 기동 → ACP 편입 확인 → Consume 2종 + 되묻기 + Expose 시연 |
+| `sdk_export_sample.py` | SDK (P8) | **ACP 불필요** — 에이전트가 `to_mcp_tool()`/`to_a2a_skill()`로 자기 자신을 표준 스키마로 파생 (SDK 단독 배포용) |
 | `standard-protocols-guide.html` | 문서 | PPT형 슬라이드 — 아키텍처·개념·데모 흐름 설명 (브라우저로 열기, ←/→ 키 탐색) |
 
 ## 빠른 시작
@@ -62,14 +63,22 @@ ACP_URL=http://localhost:8899 python acp_integration_demo.py
 [Expose] agent-card skills 119개 — 편입된 외부 시스템도 skill로 노출
 ```
 
-### 2) Expose 방향만 (실행 중인 ACP 대상)
+### 2) SDK 단독 표준 파생 (ACP 불필요)
+
+```bash
+python sdk_export_sample.py
+# → agent.to_mcp_tool() / agent.to_a2a_skill() 결과 출력
+#   (self.config + self._tools 에서 파생 — 선언 없이 코드와 항상 일치)
+```
+
+### 3) Expose 방향만 (실행 중인 ACP 대상)
 
 ```bash
 ACP_URL=http://localhost:8888 python mcp_client_sample.py   # ACP_ENABLE_MCP=true 필요
 ACP_URL=http://localhost:8888 python a2a_client_sample.py   # ACP_ENABLE_A2A=true 필요
 ```
 
-### 3) Claude Code에서 ACP 사용 (가장 짧은 Expose 데모)
+### 4) Claude Code에서 ACP 사용 (가장 짧은 Expose 데모)
 
 ```bash
 claude mcp add --transport http logosai http://localhost:8888/mcp

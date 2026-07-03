@@ -196,6 +196,8 @@ class ToolUseMixin:
                     self._tool_metrics[tc.name] = {"calls": 0, "successes": 0, "failures": 0}
                 self._tool_metrics[tc.name]["calls"] += 1
 
+                import time as _time_mod
+                _tool_t0 = _time_mod.time()
                 try:
                     tool_result = await asyncio.wait_for(
                         executor(**tc.args) if asyncio.iscoroutinefunction(executor) else asyncio.to_thread(executor, **tc.args),
@@ -216,6 +218,21 @@ class ToolUseMixin:
                     self._tool_metrics[tc.name]["failures"] += 1
                     tool_result_str = f"[Tool error: {e}. Try a different approach or answer without this tool.]"
                     self.logger.warning(f"  Tool [{tc.name}] failed: {e}")
+
+                try:  # 여정: 도구 호출 span (하네스 동작 가시화)
+                    from ..utils.trace_span import TraceSpan
+                    TraceSpan.record(
+                        name=f"tool({tc.name})",
+                        started_at=_tool_t0,
+                        agent_id=getattr(self, 'id', self.__class__.__name__),
+                        input_text=str(tc.args)[:200],
+                        output=tool_result_str[:200],
+                        success="error" not in tool_result_str.lower()[:30],
+                        stage="harness_tool",
+                        metadata={"tool": tc.name, "iteration": iteration + 1},
+                    )
+                except Exception:
+                    pass
 
                 messages.append({"role": "assistant", "content": f"[Tool call: {tc.name}({tc.args})]"})
                 messages.append({"role": "user", "content": f"[Tool result: {tc.name}] {tool_result_str}"})

@@ -58,12 +58,18 @@ class TraceSpan:
         trace_id: str = "",
         parent_id: str = "",
         metadata: Optional[Dict] = None,
+        stage: str = "",
     ) -> 'TraceSpan':
         """새 Span 시작. context에 자동 등록."""
         # trace_id: 새 트레이스 or 기존 이어받기
         effective_trace_id = trace_id or _current_trace_id.get() or str(uuid4())
         effective_parent_id = parent_id or _current_span_id.get() or ""
 
+        _meta = dict(metadata or {})
+        if stage:
+            # 여정(journey) 단계 규약 — LogosPulse가 스테이지/스윔레인 구분에 사용.
+            # ingress|plan|route|agent|a2a_call|harness_react|harness_tool|harness_plan|llm|external|integrate
+            _meta["stage"] = stage
         span = cls(
             trace_id=effective_trace_id,
             parent_id=effective_parent_id,
@@ -71,7 +77,7 @@ class TraceSpan:
             agent_id=agent_id,
             input_preview=input_text[:200] if input_text else "",
             start_time=time.time(),
-            metadata=metadata or {},
+            metadata=_meta,
         )
 
         # Context에 현재 span 등록 (자식 span이 자동으로 parent 참조)
@@ -110,11 +116,46 @@ class TraceSpan:
                 output_text=self.output_preview,
                 duration_ms=self.duration_ms,
                 metadata=self.metadata,
+                start_time=self.start_time,  # 실제 시작시각 — 여정 타임라인 정합
+                end_time=self.end_time,
             )
         except Exception:
             pass  # Never block
 
         logger.debug(f"Span end: {self.name} ({self.duration_ms:.0f}ms, {self.status})")
+
+
+    @classmethod
+    def record(
+        cls,
+        name: str,
+        started_at: float,
+        agent_id: str = "",
+        input_text: str = "",
+        output: str = "",
+        success: bool = True,
+        stage: str = "",
+        metadata: Optional[Dict] = None,
+    ) -> None:
+        """이미 끝난 작업을 사후 기록 (start~end를 한 번에).
+
+        루프 내부처럼 시작 시점에 span 객체를 들고 있기 번거로운 곳에서 사용.
+        started_at은 time.time() 기준. ContextVar를 건드리지 않아 부모 오염이 없다.
+        """
+        _meta = dict(metadata or {})
+        if stage:
+            _meta["stage"] = stage
+        span = cls(
+            trace_id=_current_trace_id.get() or str(uuid4()),
+            parent_id=_current_span_id.get() or "",
+            name=name,
+            agent_id=agent_id,
+            input_preview=input_text[:200] if input_text else "",
+            start_time=started_at,
+            metadata=_meta,
+        )
+        # ContextVar 미등록 상태이므로 end()의 reset은 no-op(토큰 None)
+        span.end(success=success, output=output)
 
 
 # Helper: 현재 trace/span ID 가져오기
