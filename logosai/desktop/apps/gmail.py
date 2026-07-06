@@ -160,12 +160,32 @@ class GmailController(AppController):
         self._chrome_js(f"window.open('{compose_url}')")
         await asyncio.sleep(3)
 
-        # 전송 버튼 클릭
-        self._chrome_js("""
-            var btn = document.querySelector('[data-tooltip*="Send"]') ||
-                      document.querySelector('[aria-label*="Send"]');
-            if (btn) btn.click();
-        """)
-        await asyncio.sleep(2)
+        # 전송: Cmd+Enter 키스트로크 (2026-07-06 감사 수정).
+        # 과거엔 JS 로 Send 버튼을 .click() 했으나 Gmail 의 Send div[role=button]
+        # 은 합성 JS 클릭을 무시한다(작성만 되고 전송 안 됨) — ACP mail_agent 가
+        # 확인한 사실. macOS 에서는 AppleScript System Events 로 Cmd+Enter 를
+        # 보내 실제 전송하고, 결과를 정직하게 반환한다(항상 True 반환하던 조용한
+        # 실패 제거).
+        if getattr(self.platform, "os_name", "") == "macos":
+            self.platform.activate_app("Google Chrome")
+            await asyncio.sleep(0.4)
+            script = (
+                'tell application "System Events" to keystroke return using command down'
+            )
+            result = self.platform.run_applescript(script)
+            await asyncio.sleep(1.5)
+            if result and "error" in str(result).lower():
+                return {
+                    "success": False,
+                    "error": f"send keystroke failed (automation permission?): {result}",
+                    "to": to,
+                }
+            return {"success": True, "result": f"Email sent to {to} (Cmd+Enter)"}
 
-        return {"success": True, "result": f"Email sent to {to}"}
+        # 비 macOS: 전송 키스트로크 경로 없음 — 작성까지만 정직하게 보고.
+        return {
+            "success": False,
+            "error": f"compose ready but send unsupported on {getattr(self.platform, 'os_name', 'unknown')} "
+                     "(Cmd+Enter send is macOS-only)",
+            "to": to,
+        }

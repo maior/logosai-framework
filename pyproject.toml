@@ -54,8 +54,16 @@ llm = [
     "langchain-openai>=0.0.8",
     "langchain-community>=0.0.28",
 ]
+desktop = [
+    # G8 (2026-07-06): 데스크톱 에이전트(logosai.desktop)용 의존성 명시.
+    # 과거엔 pyautogui 가 platform/macos.py 에서 lazy-import 되며 미선언이라
+    # ImportError 시 조용히 기능 비활성 → 명시적 extra 로 노출.
+    "pyautogui>=0.9.50",
+    "pillow>=9.0.0",
+]
 all = [
     "logosai[llm]",
+    "logosai[desktop]",
     "tavily-python>=0.3.0",
     "rich>=13.0.0",
 ]
