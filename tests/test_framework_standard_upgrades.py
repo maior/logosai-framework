@@ -48,6 +48,15 @@ def main():
     expected = meta_ver or pyproj_ver
     t("G5 버전이 단일 소스와 일치 (metadata|pyproject)", ver == expected)
 
+    # ── P1-3: fallback 리터럴 drift-lock ──
+    # metadata 미설치(dev/sdist) 경로에서 쓰이는 __init__ 하드코딩 폴백이
+    # pyproject 와 어긋나면, 미설치 환경에서 stale 버전을 보고한다. 잠근다.
+    init_src = open(os.path.join(_PKG, "logosai", "__init__.py")).read()
+    fm = re.search(r'__version__\s*=\s*"([^"]+)"', init_src)
+    fallback_lit = fm.group(1) if fm else None
+    t("P1-3 __init__ 폴백 리터럴 존재", bool(fallback_lit))
+    t("P1-3 폴백 리터럴 == pyproject (drift 없음)", fallback_lit == pyproj_ver)
+
     # ── G1: SimpleACPServer.add() registry 주입 ──
     from logosai.acp import SimpleACPServer
     from logosai.simple_agent import SimpleAgent
