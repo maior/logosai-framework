@@ -49,6 +49,15 @@ def _get_default_provider():
         return "google"
 
 
+def _get_base_url():
+    """온-프렘 OpenAI-호환 endpoint base_url (config/env). 없으면 None."""
+    try:
+        from ..config.llm_defaults import get_base_url
+        return get_base_url()
+    except Exception:
+        return None
+
+
 # 프로바이더별 라이브러리 임포트 (선택적)
 _PROVIDERS_AVAILABLE = {}
 
@@ -171,6 +180,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         top_p: Optional[float] = None,
         timeout: Optional[int] = None,
+        base_url: Optional[str] = None,
         **kwargs
     ):
         """
@@ -193,6 +203,9 @@ class LLMClient:
             provider = _get_default_provider()
         self.provider = provider.lower()
         self.model = model
+        # 온-프렘 OpenAI-호환 endpoint (2026-07-07): 미지정 시 config/env 에서.
+        # vLLM/LMStudio/Ollama(/v1)/TGI/LocalAI 를 openai 프로바이더로 사용.
+        self.base_url = base_url if base_url is not None else _get_base_url()
         self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -211,14 +224,11 @@ class LLMClient:
         # 기본 설정 사용 (설정 로딩 비활성화)
         # self._load_settings()  # 임시로 비활성화
         
-        # 기본값 설정
+        # 기본값 설정 — 모델은 프로바이더 무관 config-driven(2026-07-07).
+        # 과거엔 openai 만 "gpt-4.1-mini" 로 하드코딩돼 config/env 모델(온-프렘
+        # Qwen 등)이 무시됐다. 이제 미지정 시 항상 _get_default_model()(config/env).
         if not self.model:
-            if self.provider == "openai":
-                self.model = "gpt-4.1-mini"
-            elif self.provider == "google":
-                self.model = _get_default_model()
-            else:
-                self.model = _get_default_model()
+            self.model = _get_default_model()
         
         if not self.api_key:
             import os
@@ -226,6 +236,11 @@ class LLMClient:
                 self.api_key = os.getenv("OPENAI_API_KEY")
             elif self.provider == "google":
                 self.api_key = os.getenv("GOOGLE_API_KEY")
+
+        # 온-프렘: base_url 설정 + openai + 키 없음 → placeholder(로컬 서버는
+        # 대개 아무 키나 허용). AsyncOpenAI 가 None 키로 실패하는 것 방지.
+        if self.provider == "openai" and self.base_url and not self.api_key:
+            self.api_key = "sk-local-onprem"
         
         if self.max_tokens is None:
             self.max_tokens = 2000
@@ -269,13 +284,24 @@ class LLMClient:
         
         try:
             if self.provider == "openai":
-                # AsyncOpenAI 클라이언트 생성 (안전한 방식)
+                # AsyncOpenAI 클라이언트 생성 (base_url 설정 시 온-프렘 endpoint)
                 try:
-                    self._client = AsyncOpenAI(api_key=self.api_key)
+                    _oai_kwargs = {"api_key": self.api_key}
+                    if self.base_url:
+                        _oai_kwargs["base_url"] = self.base_url
+                    self._client = AsyncOpenAI(**_oai_kwargs)
                 except Exception as e:
                     logger.warning(f"AsyncOpenAI 클라이언트 생성 중 오류 (무시): {e}")
                     self._client = None
-                
+
+                # 온-프렘(base_url) 은 네이티브 AsyncOpenAI 경로만 사용 — langchain
+                # ChatOpenAI 건너뜀(logosai[langchain] 불필요, G8 정합).
+                if self.base_url:
+                    self._langchain_client = None
+                    self._initialized = True
+                    logger.info(f"LLM 클라이언트 초기화 완료(온-프렘): {self.provider}/{self.model} @ {self.base_url}")
+                    return True
+
                 # LangChain ChatOpenAI 클라이언트 초기화 (안전한 방식)
                 try:
                     self._langchain_client = ChatOpenAI(
@@ -768,8 +794,11 @@ class LLMClient:
                     del os.environ[var]
             
             try:
-                # 새로운 클라이언트 생성 (프록시 설정 없이)
-                direct_client = AsyncOpenAI(api_key=self.api_key)
+                # 새로운 클라이언트 생성 (프록시 설정 없이, base_url 시 온-프렘)
+                _dc_kwargs = {"api_key": self.api_key}
+                if self.base_url:
+                    _dc_kwargs["base_url"] = self.base_url
+                direct_client = AsyncOpenAI(**_dc_kwargs)
                 
                 # 메시지 형식 변환
                 api_messages = []

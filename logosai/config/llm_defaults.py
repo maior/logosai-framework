@@ -26,6 +26,7 @@ _FALLBACK = {
     "model": "gemini-2.5-flash-lite",
     "temperature": 0.7,
     "max_tokens": 4096,
+    "base_url": None,   # 온-프렘 OpenAI-호환 endpoint (vLLM/LMStudio/Ollama /v1 등)
 }
 
 # Cache (loaded once per process)
@@ -55,6 +56,8 @@ def _load_config() -> Dict[str, Any]:
                 config["temperature"] = llm_section["temperature"]
             if llm_section.get("max_tokens") is not None:
                 config["max_tokens"] = llm_section["max_tokens"]
+            if llm_section.get("base_url"):
+                config["base_url"] = llm_section["base_url"]
         except Exception:
             pass
 
@@ -71,6 +74,9 @@ def _load_config() -> Dict[str, Any]:
             config["temperature"] = float(env_temp)
         except ValueError:
             pass
+    env_base_url = os.environ.get("LOGOSAI_LLM_BASE_URL")
+    if env_base_url:
+        config["base_url"] = env_base_url
 
     _cache = config
     return config
@@ -84,6 +90,11 @@ def get_default_provider() -> str:
 def get_default_model() -> str:
     """Get default LLM model name (e.g., 'gemini-2.5-flash-lite')."""
     return _load_config()["model"]
+
+
+def get_base_url():
+    """Get on-prem OpenAI-호환 endpoint base_url (없으면 None)."""
+    return _load_config().get("base_url")
 
 
 def get_default_temperature() -> float:

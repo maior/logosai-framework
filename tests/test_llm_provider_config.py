@@ -60,6 +60,15 @@ def main():
     c4 = LLMClient(provider="anthropic")
     t("P-5 명시적 provider + 모델은 여전히 config", c4.model == cfg_model)
 
+    # ── 모델도 프로바이더 무관 config-driven (온-프렘 Qwen 등) ──
+    os.environ["LOGOSAI_LLM_MODEL"] = "Qwen/Qwen2.5-72B-Instruct"
+    llm_defaults.reload_config()
+    c6 = LLMClient(provider="openai")  # openai 여도 env 모델 존중(하드코딩 금지)
+    t("P-6 env 모델은 프로바이더 무관 존중(openai 하드코딩 금지)",
+      c6.model == "Qwen/Qwen2.5-72B-Instruct")
+    os.environ.pop("LOGOSAI_LLM_MODEL", None)
+    llm_defaults.reload_config()
+
     print("RESULT:", "GREEN" if not fails else f"RED ({len(fails)} failing)")
     return 1 if fails else 0
 
