@@ -64,6 +64,20 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
       MultiAgentMixin — call_agent, delegate, spawn_agent
     """
 
+    def __init_subclass__(cls, **kwargs):
+        """P0-1 (2026-07-06): 서브클래스가 정의한 process() 를 관측 래퍼로 자동
+        감싼다 → 평범한 에이전트도 그냥 만들면 LogosPulse 에 뜬다(표준 default).
+        opt-out: env LOGOSAI_AUTO_OBSERVE=false 또는 agent._auto_observe=False.
+        직접 정의한 process 만 1회 래핑(상속분은 이미 래핑됨 — 이중 방지)."""
+        super().__init_subclass__(**kwargs)
+        try:
+            proc = cls.__dict__.get("process")
+            if proc is not None:
+                from logosai.observability import observe_process
+                cls.process = observe_process(proc)
+        except Exception:  # noqa: BLE001 — 관측 배선 실패가 클래스 정의를 막지 않음
+            pass
+
     def __init__(self, config: AgentConfig):
         """Initialize agent
 
