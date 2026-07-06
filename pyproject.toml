@@ -74,6 +74,10 @@ logosai-agent = "logosai.cli.agent:main"
 include = ["logosai*"]
 exclude = ["logosai.examples*", "tests*"]
 
+# G4 (2026-07-06): py.typed 마커 배포 — 소비자 IDE·mypy 가 타입 힌트를 쓸 수 있게.
+[tool.setuptools.package-data]
+logosai = ["py.typed"]
+
 [tool.black]
 line-length = 88
 target-version = ["py311", "py312"]

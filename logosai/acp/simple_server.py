@@ -119,6 +119,14 @@ class SimpleACPServer:
             logger.warning(f"Agent '{aid}' already registered — replacing.")
 
         self.agents[aid] = agent
+        # G1 (2026-07-06): 형제 에이전트 레지스트리·서버 참조 주입 — MultiAgentMixin
+        # 의 call_agent/delegate 가 SDK 단독(SimpleACPServer)에서도 작동하게 한다.
+        # (ACP CustomACPServer 는 이미 run_server 에서 주입 — SDK 만 누락돼 있었음.)
+        try:
+            setattr(agent, "_agent_registry", self.agents)
+            setattr(agent, "_acp_server", self)
+        except Exception:  # noqa: BLE001 — 주입 실패가 등록을 막지 않는다
+            pass
         logger.info(f"Registered agent: {aid} ({getattr(agent, 'name', type(agent).__name__)})")
         return aid
 
