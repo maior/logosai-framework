@@ -164,7 +164,7 @@ class LLMClient:
     
     def __init__(
         self,
-        provider: str = "google",
+        provider: Optional[str] = None,
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,
@@ -186,6 +186,11 @@ class LLMClient:
             timeout: 타임아웃(초)
             **kwargs: 기타 프로바이더별 설정
         """
+        # 프로바이더 config-driven (2026-07-07): 미지정 시 ~/.logosai/config.json
+        # (llm.provider) / env(LOGOSAI_LLM_PROVIDER)에서 결정. 명시 인자는 우선.
+        # 온-프렘 등 프로바이더 전환을 설정만으로 가능하게 한다.
+        if provider is None:
+            provider = _get_default_provider()
         self.provider = provider.lower()
         self.model = model
         self.api_key = api_key
