@@ -442,6 +442,15 @@ class LLMClient:
                 raise
             logger.debug(f"Guardrail check: {guard_err}")
 
+        # Harness per-execution budget: 호출 상한 사전 점검 (예산 미활성 시 no-op).
+        # HarnessBudgetExceeded 는 상위 하네스 래퍼로 전파되어 graceful error 로.
+        try:
+            from .guardrails import precheck_llm_call
+        except ImportError:
+            precheck_llm_call = None
+        if precheck_llm_call is not None:
+            precheck_llm_call()
+
         max_retries = kwargs.pop("_max_retries", 2)
         last_error = None
         _start_time = _time.time()
@@ -465,6 +474,14 @@ class LLMClient:
                     response = await self._call_ollama(formatted_messages, **kwargs)
                 else:
                     raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
+
+                # Harness per-execution budget: 토큰(비용) 누적 (예산 미활성 시 no-op).
+                try:
+                    from .guardrails import record_llm_tokens
+                    _bt = self._extract_token_usage(response)
+                    record_llm_tokens(_bt.get("input", 0), _bt.get("output", 0))
+                except Exception:
+                    pass  # 예산 계측이 LLM 응답을 절대 훼손하지 않도록
 
                 # Observability: report metrics
                 _duration = (_time.time() - _start_time) * 1000

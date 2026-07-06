@@ -20,6 +20,12 @@ import os
 import time
 from typing import Any, Callable, Optional
 
+try:  # 예산 초과 예외 — guardrails 미가용 시에도 except 절이 유효하도록 fallback
+    from logosai.utils.guardrails import HarnessBudgetExceeded as _HarnessBudgetExceeded
+except Exception:  # noqa: BLE001
+    class _HarnessBudgetExceeded(Exception):
+        pass
+
 
 def auto_observe_enabled(agent: Any) -> bool:
     """이 에이전트에 자동 관측을 적용할지. attr opt-out > env(기본 on)."""
@@ -95,6 +101,45 @@ def _timeout_response(agent_id: str, timeout_s: float):
     )
 
 
+def resolve_harness_budget(agent: Any):
+    """실행당 LLM 호출/토큰 상한 결정. (max_calls, max_tokens), 미설정은 None.
+
+    소스: _harness dict(max_llm_calls/max_tokens) > env(LOGOSAI_HARNESS_MAX_CALLS
+    /LOGOSAI_HARNESS_MAX_TOKENS) > 기본(25 호출 / 200000 토큰).
+    호출부는 harness enabled 일 때만 부른다(opt-out 은 resolve_harness 가 게이트).
+    """
+    max_calls: Optional[int] = None
+    max_tokens: Optional[int] = None
+    h = getattr(agent, "_harness", None)
+    if isinstance(h, dict):
+        if h.get("max_llm_calls") is not None:
+            max_calls = int(h["max_llm_calls"])
+        if h.get("max_tokens") is not None:
+            max_tokens = int(h["max_tokens"])
+    if max_calls is None:
+        try:
+            max_calls = int(os.getenv("LOGOSAI_HARNESS_MAX_CALLS", "25"))
+        except (TypeError, ValueError):
+            max_calls = 25
+    if max_tokens is None:
+        try:
+            max_tokens = int(os.getenv("LOGOSAI_HARNESS_MAX_TOKENS", "200000"))
+        except (TypeError, ValueError):
+            max_tokens = 200000
+    # 0/음수 → 무제한(None)
+    max_calls = max_calls if (max_calls and max_calls > 0) else None
+    max_tokens = max_tokens if (max_tokens and max_tokens > 0) else None
+    return (max_calls, max_tokens)
+
+
+def _budget_response(agent_id: str, exc: Exception):
+    """하네스 예산(호출/토큰) 초과 시 graceful AgentResponse.error."""
+    from logosai.agent_types import AgentResponse
+    return AgentResponse.error(
+        f"harness budget: agent '{agent_id}' {exc}"
+    )
+
+
 def _current_trace_id() -> Optional[str]:
     try:
         from logosai.utils.trace_span import get_current_trace_id
@@ -126,6 +171,16 @@ def observe_process(process_fn: Callable) -> Callable:
         span = start_agent_span(agent_id, query) if observe else None
         t0 = time.monotonic()
         success, err = True, None
+        # 실행 예산(호출/토큰 상한) — harness 활성 시에만. begin 은 wait_for
+        # 태스크 생성 '전' 바깥 컨텍스트에서 (caps 가 복사되어 하위 호출에 보임).
+        budget_tok = None
+        if h_enabled:
+            try:
+                from logosai.utils.guardrails import begin_execution_budget
+                max_calls, max_tokens = resolve_harness_budget(self)
+                budget_tok = begin_execution_budget(max_calls, max_tokens)
+            except Exception:
+                budget_tok = None
         try:
             if h_enabled and h_timeout and h_timeout > 0:
                 try:
@@ -136,10 +191,19 @@ def observe_process(process_fn: Callable) -> Callable:
                     success, err = False, f"harness timeout ({h_timeout}s)"
                     return _timeout_response(agent_id, h_timeout)
             return await process_fn(self, query, context)
+        except _HarnessBudgetExceeded as be:  # 호출/토큰 상한 초과 → graceful
+            success, err = False, str(be)
+            return _budget_response(agent_id, be)
         except Exception as e:  # noqa: BLE001 — 성공/실패 관측 후 원래 예외 재전파
             success, err = False, str(e)
             raise
         finally:
+            if budget_tok is not None:
+                try:
+                    from logosai.utils.guardrails import reset_execution_budget
+                    reset_execution_budget(budget_tok)
+                except Exception:
+                    pass
             dur_ms = (time.monotonic() - t0) * 1000.0
             try:
                 if span is not None:
