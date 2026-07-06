@@ -55,12 +55,9 @@ class QueryDecomposer:
 
         try:
             if self.llm is None:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash-lite",
-                    temperature=0.3,
-                    convert_system_message_to_human=True
-                )
+                # G6 (2026-07-07): LangChain Google 래퍼(hang 위험) → LLMClient 직접.
+                from logosai.utils.llm_client import LLMClient
+                self.llm = LLMClient(model="gemini-2.5-flash-lite")
             self._initialized = True
             logger.info("QueryDecomposer 초기화 완료")
         except Exception as e:
@@ -189,8 +186,9 @@ class QueryDecomposer:
         prompt = self._create_decomposition_prompt(query, agents_info, agent_ids)
 
         try:
-            # LLM 호출
-            response = await self.llm.ainvoke(prompt)
+            # LLM 호출 (LLMClient invoke_messages — LCEL ainvoke 대체)
+            response = await self.llm.invoke_messages(
+                [{"role": "user", "content": prompt}], temperature=0.3)
             response_text = response.content if hasattr(response, 'content') else str(response)
 
             # 응답 파싱
