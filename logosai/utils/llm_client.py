@@ -87,6 +87,38 @@ except ImportError:
 # (LangChain 커뮤니티 패키지 불필요 — 온-프렘 base_url 설계와 동일 메커니즘)
 _PROVIDERS_AVAILABLE["ollama"] = _PROVIDERS_AVAILABLE["openai"]
 
+# ── OpenAI-호환 프로바이더 레지스트리 (2026-07-07 진화) ─────────────────
+# 업계 표준이 된 OpenAI-호환 API 를 지렛대로 프로바이더 폭을 흡수한다.
+# 항목: base_url + api_key_env (키 불요 로컬 서버는 api_key_env=None).
+# config(~/.logosai/config.json llm.providers.<name>)로 코드 수정 없이 확장.
+_COMPAT_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "ollama":     {"base_url": "http://localhost:11434/v1", "api_key_env": None},
+    "groq":       {"base_url": "https://api.groq.com/openai/v1", "api_key_env": "GROQ_API_KEY"},
+    "deepseek":   {"base_url": "https://api.deepseek.com/v1", "api_key_env": "DEEPSEEK_API_KEY"},
+    "together":   {"base_url": "https://api.together.xyz/v1", "api_key_env": "TOGETHER_API_KEY"},
+    "fireworks":  {"base_url": "https://api.fireworks.ai/inference/v1", "api_key_env": "FIREWORKS_API_KEY"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "api_key_env": "OPENROUTER_API_KEY"},
+    "mistral":    {"base_url": "https://api.mistral.ai/v1", "api_key_env": "MISTRAL_API_KEY"},
+    "xai":        {"base_url": "https://api.x.ai/v1", "api_key_env": "XAI_API_KEY"},
+    "perplexity": {"base_url": "https://api.perplexity.ai", "api_key_env": "PERPLEXITY_API_KEY"},
+}
+
+
+def _get_extra_providers() -> Dict[str, Dict[str, Any]]:
+    """config(llm.providers) 로 정의된 사용자 확장 프로바이더 (없으면 {})."""
+    try:
+        from ..config.llm_defaults import get_extra_providers
+        return get_extra_providers() or {}
+    except Exception:
+        return {}
+
+
+def _resolve_compat_provider(name: str) -> Optional[Dict[str, Any]]:
+    """내장 ∪ config 레지스트리에서 OpenAI-호환 프로바이더 정의 조회."""
+    merged = dict(_COMPAT_PROVIDERS)
+    merged.update(_get_extra_providers())
+    return merged.get(name)
+
 from .llm_settings import get_provider_settings, get_default_llm_settings, get_api_key
 
 
@@ -207,12 +239,42 @@ class LLMClient:
         self.timeout = timeout
         self.extra_params = kwargs
         
-        # 프로바이더 유효성 검사
-        if self.provider not in [p.value for p in LLMProvider]:
-            raise ValueError(f"지원되지 않는 프로바이더: {provider}")
-        
-        # 프로바이더 라이브러리 사용 가능성 검사
-        if not _PROVIDERS_AVAILABLE.get(self.provider, False):
+        # 프로바이더 해석 (2026-07-07 진화): 1군 native(openai/google/anthropic)
+        # → 2군 OpenAI-호환 레지스트리(내장 ∪ config llm.providers)
+        # → base_url 단독 generic. enum 제약 제거로 "다양한 LLM 소화".
+        self._compat = False
+        self._compat_api_key_env: Optional[str] = None
+        if self.provider in ("openai", "google", "anthropic"):
+            pass  # 1군 native
+        else:
+            compat_def = _resolve_compat_provider(self.provider)
+            if compat_def is not None:
+                self._compat = True
+                self._compat_api_key_env = compat_def.get("api_key_env")
+                # 명시 base_url > extra_params.base_url > 레지스트리 기본
+                # (config llm.base_url 은 기본 프로바이더 온-프렘용 — 여기 미적용)
+                self.base_url = (
+                    base_url
+                    or self.extra_params.get("base_url")
+                    or compat_def.get("base_url")
+                )
+            elif self.base_url:
+                self._compat = True  # 이름 없는 generic 호환 서버
+            else:
+                _known = sorted(
+                    {"openai", "google", "anthropic"}
+                    | set(_COMPAT_PROVIDERS)
+                    | set(_get_extra_providers())
+                )
+                raise ValueError(
+                    f"지원되지 않는 프로바이더: {provider}. "
+                    f"가용: {', '.join(_known)} (또는 base_url 로 OpenAI-호환 서버 직접 지정, "
+                    f"config llm.providers 로 확장 가능)"
+                )
+
+        # 프로바이더 라이브러리 사용 가능성 검사 (호환 계열은 openai SDK 필요)
+        _lib_key = "openai" if self._compat else self.provider
+        if not _PROVIDERS_AVAILABLE.get(_lib_key, False):
             raise ImportError(f"{provider} 프로바이더에 필요한 라이브러리가 설치되지 않았습니다.")
         
         # 기본 설정 사용 (설정 로딩 비활성화)
@@ -230,6 +292,15 @@ class LLMClient:
                 self.api_key = os.getenv("OPENAI_API_KEY")
             elif self.provider == "google":
                 self.api_key = os.getenv("GOOGLE_API_KEY")
+            elif self.provider == "anthropic":
+                self.api_key = os.getenv("ANTHROPIC_API_KEY")
+            elif self._compat and self._compat_api_key_env:
+                self.api_key = os.getenv(self._compat_api_key_env)
+
+        # 호환 계열: 키 불요 서버(ollama 등, api_key_env=None)는 placeholder —
+        # openai SDK 가 None 키로 실패하는 것 방지 (로컬 서버는 아무 키나 허용)
+        if self._compat and not self.api_key and not self._compat_api_key_env:
+            self.api_key = "sk-compat-local"
 
         # 온-프렘: base_url 설정 + openai + 키 없음 → placeholder(로컬 서버는
         # 대개 아무 키나 허용). AsyncOpenAI 가 None 키로 실패하는 것 방지.
@@ -302,15 +373,15 @@ class LLMClient:
                 self._client = AsyncAnthropic(api_key=self.api_key)
                 self._langchain_client = None
 
-            elif self.provider == "ollama":
-                # Ollama 는 OpenAI-호환 /v1 endpoint 제공 — openai SDK 로 직접 호출
-                # (LangChain 커뮤니티 패키지 제거 — 온-프렘 base_url 설계와 동일 메커니즘)
-                _ollama_base = self.base_url or self.extra_params.get("base_url") or "http://localhost:11434/v1"
+            elif self._compat:
+                # OpenAI-호환 계열 (ollama/groq/deepseek/... + config 확장 + generic)
+                # — 전부 openai SDK 하나로 소화 (레지스트리가 base_url/키 규약 제공)
                 self._client = AsyncOpenAI(
-                    api_key=self.api_key or "ollama",  # Ollama 는 키 미검증, SDK 필수값만 충족
-                    base_url=_ollama_base,
+                    api_key=self.api_key or "sk-compat-local",
+                    base_url=self.base_url,
                 )
                 self._langchain_client = None
+                logger.info(f"LLM 클라이언트 초기화(OpenAI-호환): {self.provider}/{self.model} @ {self.base_url}")
             
             self._initialized = True
             logger.info(f"LLM 클라이언트 초기화 완료: {self.provider}/{self.model}")
@@ -347,6 +418,10 @@ class LLMClient:
         if self.provider == "google":
             async for chunk in self._stream_google(message, system_prompt):
                 yield chunk
+        elif self.provider == "openai" or self._compat:
+            # OpenAI-호환 진짜 토큰 스트리밍 (2026-07-07 — 기존엔 google 전용)
+            async for chunk in self._stream_openai_compat(message, system_prompt):
+                yield chunk
         else:
             # Fallback: non-streaming (yield full response)
             msgs = []
@@ -355,6 +430,26 @@ class LLMClient:
             msgs.append(LLMMessage(role="user", content=message))
             response = await self.invoke_messages(msgs)
             yield response.content
+
+    async def _stream_openai_compat(self, message: str, system_prompt: str = None):
+        """OpenAI-호환 chat.completions 토큰 스트리밍."""
+        api_messages = []
+        if system_prompt:
+            api_messages.append({"role": "system", "content": system_prompt})
+        api_messages.append({"role": "user", "content": message})
+        stream = await self._client.chat.completions.create(
+            model=self.model,
+            messages=api_messages,
+            temperature=self.temperature,
+            stream=True,
+        )
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content
+            except (AttributeError, IndexError):
+                delta = None
+            if delta:
+                yield delta
 
     async def _stream_google(self, message: str, system_prompt: str = None):
         """Google Gemini streaming."""
@@ -459,14 +554,13 @@ class LLMClient:
 
         for attempt in range(max_retries + 1):
             try:
-                if self.provider == "openai":
+                if self.provider == "openai" or self._compat:
+                    # native openai + OpenAI-호환 계열(ollama/groq/... /generic)
                     response = await self._call_openai(formatted_messages, **kwargs)
                 elif self.provider == "google":
                     response = await self._call_google(formatted_messages, **kwargs)
                 elif self.provider == "anthropic":
                     response = await self._call_anthropic(formatted_messages, **kwargs)
-                elif self.provider == "ollama":
-                    response = await self._call_ollama(formatted_messages, **kwargs)
                 else:
                     raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
 
@@ -563,9 +657,63 @@ class LLMClient:
 
         if self.provider == "google":
             return await self._call_google_with_tools(formatted, tools, **kwargs)
-        else:
-            # Non-Google: 도구 설명을 시스템 프롬프트에 포함하는 폴백
-            return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+        if self.provider == "openai" or self._compat:
+            # OpenAI-호환 native function calling (2026-07-07 — 기존엔 프롬프트 폴백).
+            # 일부 호환 서버는 tools 미지원 → 실패 시 기존 폴백으로 강등.
+            try:
+                return await self._call_openai_with_tools(formatted, tools, **kwargs)
+            except Exception as e:
+                logger.warning(f"native tool calling 실패, 프롬프트 폴백: {e}")
+                return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+        # 그 외(anthropic 등): 도구 설명을 시스템 프롬프트에 포함하는 폴백
+        return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+
+    async def _call_openai_with_tools(
+        self,
+        messages: List[LLMMessage],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """OpenAI-호환 native function calling."""
+        import json as _json
+
+        oai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": {
+                        "type": "object",
+                        "properties": t.get("parameters", {}),
+                    },
+                },
+            }
+            for t in tools
+        ]
+        api_messages = [{"role": m.role, "content": m.content} for m in messages]
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=api_messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            tools=oai_tools,
+        )
+        msg = response.choices[0].message
+        tool_calls = []
+        for tc in (getattr(msg, "tool_calls", None) or []):
+            try:
+                args = _json.loads(tc.function.arguments or "{}")
+            except (ValueError, TypeError):
+                args = {}
+            tool_calls.append(ToolCall(name=tc.function.name, args=args, id=getattr(tc, "id", "")))
+        return LLMResponse(
+            content=msg.content or "",
+            provider=self.provider,
+            model=self.model,
+            tool_calls=tool_calls or None,
+            raw_response=response,
+        )
 
     async def _call_google_with_tools(
         self,
@@ -971,20 +1119,7 @@ class LLMClient:
             raw_response=response,
         )
 
-    async def _call_ollama(self, messages: List[LLMMessage], **kwargs) -> LLMResponse:
-        """Ollama 호출 — OpenAI-호환 /v1 chat.completions (langchain 제거)."""
-        api_messages = [{"role": m.role, "content": m.content} for m in messages]
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            messages=api_messages,
-            temperature=self.temperature,
-        )
-        return LLMResponse(
-            content=response.choices[0].message.content or "",
-            provider=self.provider,
-            model=self.model,
-            raw_response=response,
-        )
+    # (구 _call_ollama 는 OpenAI-호환 통합으로 _call_openai 에 흡수 — 2026-07-07)
     
     def get_langchain_client(self):
         """LangChain 호환 래퍼 반환 (deprecated — 하위 호환용).

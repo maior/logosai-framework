@@ -27,6 +27,7 @@ _FALLBACK = {
     "temperature": 0.7,
     "max_tokens": 4096,
     "base_url": None,   # 온-프렘 OpenAI-호환 endpoint (vLLM/LMStudio/Ollama /v1 등)
+    "providers": {},    # 사용자 확장 OpenAI-호환 프로바이더 {name: {base_url, api_key_env}}
 }
 
 # Cache (loaded once per process)
@@ -58,6 +59,8 @@ def _load_config() -> Dict[str, Any]:
                 config["max_tokens"] = llm_section["max_tokens"]
             if llm_section.get("base_url"):
                 config["base_url"] = llm_section["base_url"]
+            if isinstance(llm_section.get("providers"), dict):
+                config["providers"] = llm_section["providers"]
         except Exception:
             pass
 
@@ -95,6 +98,11 @@ def get_default_model() -> str:
 def get_base_url():
     """Get on-prem OpenAI-호환 endpoint base_url (없으면 None)."""
     return _load_config().get("base_url")
+
+
+def get_extra_providers() -> Dict[str, Any]:
+    """사용자 확장 OpenAI-호환 프로바이더 목록 (config llm.providers, 없으면 {})."""
+    return dict(_load_config().get("providers") or {})
 
 
 def get_default_temperature() -> float:
