@@ -24,11 +24,8 @@ from .mixins import ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiA
 if TYPE_CHECKING:
     from .collaboration import CollaborationService, CollaborationResult, AgentCapability
 
-# Optional LLM dependency
-try:
-    from langchain_openai import ChatOpenAI
-except ImportError:
-    ChatOpenAI = None
+# LLM 클라이언트는 함수 내부에서 지연 import (utils/__init__ 순환 방지)
+# — 구 langchain 챗 래퍼 의존은 제거됨 (2026-07-08 L4 스윕)
 
 from .agent_self_assessment import AgentSelfAssessment, SelfAssessmentResult
 from .dialogue_protocol import SimpleDialogueProtocol, DialogueCapability, DialogueMessage, DialogueTurn
@@ -1340,10 +1337,11 @@ class AgentTemplate:
         # Set session to None so that _process_logic is called
         self.session = None
 
-        self.llm = ChatOpenAI(
-            model_name="gpt-4",
-            temperature=0.3
-        )
+        # LLMClient 기반 ainvoke 호환 객체 — 모델은 config 기본
+        # (구: "gpt-4" 하드코딩 + langchain. 템플릿 상속자들이 이 패턴을
+        #  복제하던 재생산 벡터였음)
+        from .utils.llm_client import GoogleLangChainWrapper, LLMClient
+        self.llm = GoogleLangChainWrapper(LLMClient(temperature=0.3))
         # Create chain
         self.chain = self._create_classification_chain()
 
