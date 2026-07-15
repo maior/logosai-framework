@@ -68,3 +68,6 @@ __all__ = [
     'get_model_info',
     'get_available_llm_providers',
 ] + __llm_client_exports__ + __text_utils_exports__
+
+from logosai.utils.extraction import extract_series_llm
+from logosai.utils.safe_json import json_safe

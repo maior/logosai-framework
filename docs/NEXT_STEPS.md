@@ -1,7 +1,22 @@
 # LogosAI Framework — 다음 진행 작업
 
-> 최종 업데이트: 2026-04-04
-> 아키텍처 리팩터링 완료 후 다음 단계 정리
+> 최종 업데이트: 2026-07-15
+> Agentic 프레임워크 업그레이드 트랙 진행 중 — 상세 로드맵·진행 로그:
+> `../../docs/AGENTIC_FRAMEWORK_UPGRADE_ROADMAP.md`
+
+## 🔄 진행 중: Agentic 업그레이드 트랙 (2026-07-15 ~)
+
+**목표**: 에이전트 간 실제 커뮤니케이션 + 플래너 워크플로우 신뢰성.
+**원칙**: 능력은 프레임워크 계약으로 → 수제/FORGE 생성 에이전트 동일 상속.
+
+| Phase | 내용 | 상태 |
+|-------|------|------|
+| 1 | **계약 3종**: `HandoffEnvelope`+`get_handoff()` (표준 스테이지 수신), `utils.extraction.extract_series_llm` (구조화 추출+가드), `utils.json_safe` | ✅ 07-15 |
+| 2 | 오케스트레이터 Envelope 생산 (전 스테이지 무절단 탑재) | ✅ 07-15 |
+| 3 | FORGE 생성 템플릿의 SDK 계약 타깃팅 (get_handoff·json_safe 내장) | ✅ 07-15 |
+| 4 | `MultiAgentMixin.request_upstream` — 역방향 재요청 채널 (라이브 A2A 실증) | ✅ 07-15 |
+| 5 | Plan Critique 관문 | ✅ 07-15 |
+| 병행 | ko-sroberta 임베딩 + HybridSelector 재가동 | ⏳ |
 
 ## 완료된 작업 (2026-04-03~04)
 

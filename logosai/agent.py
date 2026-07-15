@@ -75,6 +75,15 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
         except Exception:  # noqa: BLE001 — 관측 배선 실패가 클래스 정의를 막지 않음
             pass
 
+    def get_handoff(self, query=None, context=None):
+        """멀티스테이지 핸드오프 표준 수신 — HandoffEnvelope 반환.
+
+        dict context(previous_results)·직렬화 문자열("[이전 단계 결과]…")·
+        data_points 를 한 계약으로 흡수한다. FORGE 생성물 포함 모든 에이전트의
+        스테이지 수신 지점 (Agentic Upgrade Phase 1, 2026-07-15)."""
+        from logosai.handoff import HandoffEnvelope
+        return HandoffEnvelope.from_context(query, context)
+
     def __init__(self, config: AgentConfig):
         """Initialize agent
 

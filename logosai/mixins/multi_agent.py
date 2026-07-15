@@ -118,6 +118,48 @@ class MultiAgentMixin:
             return []
         return list(self._agent_registry.keys())
 
+    async def request_upstream(
+        self,
+        agent_id: str,
+        need: str,
+        context: Optional[Dict[str, Any]] = None,
+        max_depth: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """역방향 채널 — 상류 에이전트에 구조화 재요청 (Agentic Upgrade Phase 4).
+
+        멀티스테이지 워크플로우에서 하류 에이전트가 받은 데이터로 작업이 불가할 때
+        (예: 시각화할 수치 시리즈 없음) 조용히 포기하는 대신 상류에 "이런 형식으로
+        다시" 를 요청한다. 재귀 상한(depth)으로 무한 왕복을 차단하고, 대용량
+        previous_results 는 재전파하지 않는다.
+
+        Returns:
+            call_agent 결과 dict(success=True 일 때만), 그 외 None — 호출측이
+            기존 폴백(passthrough 등)으로 진행한다.
+        """
+        ctx = dict(context or {})
+        depth = 0
+        try:
+            depth = int(ctx.get("_upstream_depth") or 0)
+        except (TypeError, ValueError):
+            pass
+        if depth >= max_depth:
+            self.logger.info(
+                f"request_upstream: depth {depth} ≥ {max_depth}, 재요청 생략 (재귀 상한)")
+            return None
+        ctx["_upstream_depth"] = depth + 1
+        ctx.pop("previous_results", None)
+
+        # SDK 를 상속하지 않는 "독립 구현" 에이전트도 unbound 호출로 쓸 수 있게
+        # (요구 속성: _agent_registry, logger — viz 등 레거시 독립 에이전트 실측)
+        call = getattr(self, "call_agent", None)
+        if call is None:
+            async def call(a, q, c):
+                return await MultiAgentMixin.call_agent(self, a, q, c)
+        result = await call(agent_id, need, ctx)
+        if not (isinstance(result, dict) and result.get("success")):
+            return None
+        return result
+
     def spawn_agent(
         self,
         name: str,
