@@ -422,6 +422,10 @@ class LLMClient:
             # OpenAI-호환 진짜 토큰 스트리밍 (2026-07-07 — 기존엔 google 전용)
             async for chunk in self._stream_openai_compat(message, system_prompt):
                 yield chunk
+        elif self.provider == "anthropic":
+            # Anthropic native 토큰 스트리밍 (2026-07-19 — 기존엔 전문 1회 폴백)
+            async for chunk in self._stream_anthropic(message, system_prompt):
+                yield chunk
         else:
             # Fallback: non-streaming (yield full response)
             msgs = []
@@ -450,6 +454,28 @@ class LLMClient:
                 delta = None
             if delta:
                 yield delta
+
+    async def _stream_anthropic(self, message: str, system_prompt: str = None):
+        """Anthropic Messages API 토큰 스트리밍.
+
+        SDK 계약(anthropic>=0.96): `messages.stream(...)` 이 async context
+        manager 를 돌려주고 `.text_stream` 이 텍스트 델타를 준다.
+        _call_anthropic 과 동일하게 system 은 messages 배열이 아니라 top-level
+        파라미터로 보낸다.
+        """
+        _kwargs = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": message}],
+            "max_tokens": self.max_tokens or 1024,
+            "temperature": self.temperature,
+        }
+        if system_prompt:
+            _kwargs["system"] = system_prompt
+
+        async with self._client.messages.stream(**_kwargs) as stream:
+            async for text in stream.text_stream:
+                if text:
+                    yield text
 
     async def _stream_google(self, message: str, system_prompt: str = None):
         """Google Gemini streaming."""
@@ -665,7 +691,15 @@ class LLMClient:
             except Exception as e:
                 logger.warning(f"native tool calling 실패, 프롬프트 폴백: {e}")
                 return await self._call_with_tools_fallback(formatted, tools, **kwargs)
-        # 그 외(anthropic 등): 도구 설명을 시스템 프롬프트에 포함하는 폴백
+        if self.provider == "anthropic":
+            # Anthropic native tool use (2026-07-19 — 기존엔 프롬프트 폴백).
+            # openai 경로와 동일하게, 실패 시 조용히 폴백으로 강등한다.
+            try:
+                return await self._call_anthropic_with_tools(formatted, tools, **kwargs)
+            except Exception as e:
+                logger.warning(f"anthropic native tool calling 실패, 프롬프트 폴백: {e}")
+                return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+        # 그 외: 도구 설명을 시스템 프롬프트에 포함하는 폴백
         return await self._call_with_tools_fallback(formatted, tools, **kwargs)
 
     async def _call_openai_with_tools(
@@ -711,6 +745,76 @@ class LLMClient:
             content=msg.content or "",
             provider=self.provider,
             model=self.model,
+            tool_calls=tool_calls or None,
+            raw_response=response,
+        )
+
+    async def _call_anthropic_with_tools(
+        self,
+        messages: List[LLMMessage],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """Anthropic native tool use.
+
+        스키마 차이 주의: OpenAI 는 function.parameters, Anthropic 은
+        top-level `input_schema` 를 쓴다. 프레임워크 공통 tools 계약
+        (name/description/parameters=properties dict) 을 여기서 변환한다.
+        응답의 content 는 블록 배열이며 tool_use 블록에 {id, name, input} 이 온다.
+        """
+        anthropic_tools = [
+            {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "input_schema": {
+                    "type": "object",
+                    "properties": t.get("parameters", {}) or {},
+                },
+            }
+            for t in tools
+        ]
+
+        system_parts = [m.content for m in messages if m.role == "system"]
+        api_messages = [
+            {"role": m.role, "content": m.content}
+            for m in messages
+            if m.role in ("user", "assistant")
+        ]
+        _kwargs = {
+            "model": self.model,
+            "messages": api_messages,
+            "max_tokens": self.max_tokens or 1024,
+            "temperature": self.temperature,
+            "tools": anthropic_tools,
+        }
+        if system_parts:
+            _kwargs["system"] = "\n\n".join(system_parts)
+
+        response = await self._client.messages.create(**_kwargs)
+
+        text_parts, tool_calls = [], []
+        for block in (getattr(response, "content", None) or []):
+            btype = getattr(block, "type", None)
+            if btype == "tool_use":
+                tool_calls.append(ToolCall(
+                    name=getattr(block, "name", ""),
+                    args=getattr(block, "input", None) or {},
+                    id=getattr(block, "id", ""),
+                ))
+            else:
+                text = getattr(block, "text", "")
+                if text:
+                    text_parts.append(text)
+
+        usage = getattr(response, "usage", None)
+        return LLMResponse(
+            content="".join(text_parts),
+            provider=self.provider,
+            model=self.model,
+            usage={
+                "input_tokens": getattr(usage, "input_tokens", None),
+                "output_tokens": getattr(usage, "output_tokens", None),
+            } if usage else None,
             tool_calls=tool_calls or None,
             raw_response=response,
         )
