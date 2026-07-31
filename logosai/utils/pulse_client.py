@@ -42,7 +42,16 @@ _SPOOL_PATH = os.getenv(
 )
 _SPOOL_MAX = 5000        # 장기 다운 시 디스크 고갈 방지 — 초과분은 오래된 것부터 폐기
 _REPLAY_BATCH = 50       # 성공 1회당 재전송 상한 — 버스트로 실행을 지연시키지 않는다
-_SPOOLABLE = ("/api/v1/ingest/execution", "/api/v1/ingest/llm-call")
+_SPOOLABLE = (
+    "/api/v1/ingest/execution",
+    "/api/v1/ingest/llm-call",
+    "/api/v1/ingest/event",   # 클라이언트 발급 event_id 로 멱등
+    # 2026-07-31: span 편입. 서버가 ON CONFLICT DO NOTHING 으로 멱등해졌다.
+    # 이전엔 재전송이 UniqueViolation 을 내서 제외돼 있었고, 그 탓에 전송 실패한
+    # span 이 **그냥 버려졌다** — 생성 중 이벤트 루프가 막혀 2초 타임아웃이
+    # 소진되면 그 생성의 관측이 통째로 사라졌다 (실측: FORGE 생성마다 유실).
+    "/api/v1/ingest/span",
+)
 _replaying = False
 
 
@@ -224,6 +233,69 @@ async def send_llm_call(
     })
 
 
+async def send_event(
+    event_type: str,
+    source: str = "",
+    agent_id: str = "",
+    severity: str = "info",
+    payload: Optional[Dict[str, Any]] = None,
+) -> None:
+    """런타임 이벤트 전송 (회로 차단 / 롤백 / 인터랙션 등).
+
+    지금까지 인메모리로만 존재해 프로세스 재시작과 함께 사라지던 신호들이다.
+    """
+    await _post("/api/v1/ingest/event", {
+        # 클라이언트 발급 ID — 스풀 재전송이 중복을 만들지 않게
+        "event_id": str(uuid.uuid4()),
+        "event_type": event_type,
+        "source": source,
+        "agent_id": agent_id,
+        "severity": severity,
+        "payload": payload or {},
+    })
+
+
+_BG_TASKS: set = set()
+
+
+def _fire_and_forget(coro, endpoint: str = "", data: dict = None) -> None:
+    """배경 전송 공통 진입점 (2026-07-31).
+
+    두 가지를 보장한다:
+      1. **태스크 참조 유지** — 참조 없는 Task 는 GC 대상이라 바쁜 루프에서
+         실행 전에 사라질 수 있다.
+      2. **루프 부재 시 유실 금지** — 실행 중인 루프가 없으면 `ensure_future` 가
+         RuntimeError 를 내고 기존 `except: pass` 가 흔적까지 지웠다.
+         스풀 가능한 엔드포인트면 적재하고, 아니면 최소한 실패로 기록한다.
+         (실측: FORGE 생성의 span 이 실패 로그조차 없이 통째로 사라졌다)
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        coro.close()
+        if endpoint and data is not None:
+            _spool_append(endpoint, data)
+        _record_failure(f"no running loop ({endpoint or 'unknown'})")
+        return
+    try:
+        task = loop.create_task(coro)
+        _BG_TASKS.add(task)
+        task.add_done_callback(_BG_TASKS.discard)
+    except Exception as e:
+        coro.close()
+        if endpoint and data is not None:
+            _spool_append(endpoint, data)
+        _record_failure(f"{type(e).__name__}: {e} ({endpoint or 'unknown'})")
+
+
+def send_event_bg(event_type: str, **kwargs) -> None:
+    """Background send. 동기 코드(CircuitBreaker 등)에서 사용."""
+    try:
+        asyncio.ensure_future(send_event(event_type=event_type, **kwargs))
+    except Exception:
+        pass
+
+
 def send_execution_bg(
     agent_id: str, **kwargs
 ) -> None:
@@ -237,7 +309,7 @@ def send_execution_bg(
 def send_llm_call_bg(**kwargs) -> None:
     """Background send (asyncio.ensure_future). LLMClient callback에서 사용."""
     try:
-        asyncio.ensure_future(send_llm_call(**kwargs))
+        _fire_and_forget(send_llm_call(**kwargs), "/api/v1/ingest/llm-call", dict(kwargs))
     except Exception:
         pass
 
@@ -288,7 +360,7 @@ async def send_conversation(
 
 def send_conversation_bg(**kwargs) -> None:
     try:
-        asyncio.ensure_future(send_conversation(**kwargs))
+        _fire_and_forget(send_conversation(**kwargs), "/api/v1/ingest/conversation", dict(kwargs))
     except Exception:
         pass
 
@@ -296,6 +368,6 @@ def send_conversation_bg(**kwargs) -> None:
 def send_span_bg(**kwargs) -> None:
     """Background span send."""
     try:
-        asyncio.ensure_future(send_span(**kwargs))
+        _fire_and_forget(send_span(**kwargs), "/api/v1/ingest/span", dict(kwargs))
     except Exception:
         pass

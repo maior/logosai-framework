@@ -130,13 +130,24 @@ def test_spool_is_bounded(tmpdir):
 
 
 def test_spool_only_idempotent_endpoints(tmpdir):
-    """span 은 아직 멱등하지 않아 재전송 시 중복된다 — 스풀 대상에서 제외."""
+    """멱등한 endpoint 만 스풀한다 — span 은 2026-07-31 부터 포함.
+
+    계약 정정: 예전엔 span ingest 가 `db.add` 라 재전송이 UniqueViolation 을 냈고,
+    그래서 스풀 대상에서 제외했다. 그 결과 **전송 실패한 span 이 그냥 버려졌고**,
+    FORGE 생성 과정이 통째로 관측에서 사라졌다(실측: Pulse 최신 span 이 9시간 전).
+    서버를 `ON CONFLICT (id) DO NOTHING` 으로 멱등화했으므로 이제 스풀이 안전하다.
+
+    반대로 멱등하지 않은 endpoint(conversation 등)는 여전히 제외돼야 한다.
+    """
     _reset(tmpdir)
     pulse_client.PULSE_URL = _dead_url()
 
     asyncio.run(pulse_client._post("/api/v1/ingest/span", {"span_id": "s1"}))
+    assert _spool_lines(), "span 이 스풀되지 않았다 — 전송 실패 시 유실된다"
 
-    assert _spool_lines() == [], "span 이 스풀됨 (재전송 시 중복 위험)"
+    _reset(tmpdir)
+    asyncio.run(pulse_client._post("/api/v1/ingest/conversation", {"trace_id": "t1"}))
+    assert _spool_lines() == [], "멱등하지 않은 endpoint 가 스풀됨 (재전송 시 중복)"
     print("PASS spool_only_idempotent_endpoints")
 
 
