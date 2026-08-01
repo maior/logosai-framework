@@ -96,6 +96,28 @@ def main():
     env4 = HandoffEnvelope.from_context(None, None)
     t("H-6 빈 입력 안전 (크래시 없음)", env4.stages == [] and env4.data_points is None)
 
+    # input_data — ontology/orchestrator/execution_engine.py:511 이 실제로 세우는 키.
+    # docx·pptx·llm_search·summarization 이 각자 사설로 읽던 것이라, 계약이 이걸
+    # 빠뜨리면 get_handoff 로 갈아탄 에이전트는 데이터를 통째로 못 본다.
+    # (2026-08-02 xlsx 에이전트 실측에서 드러남 — 자료를 쥐고도 인터넷 검색을 했다)
+    env7 = HandoffEnvelope.from_context(
+        "표로 만들어줘", {"input_data": "1월 매출 1,200만원\n2월 매출 1,850만원"})
+    t("H-7 input_data 흡수 (execution_engine 실경로)",
+      any("1월 매출" in s for s in env7.source_texts()))
+
+    env8 = HandoffEnvelope.from_context("x", {"content": {"answer": "본문 텍스트"}})
+    t("H-8 content 키도 흡수", any("본문 텍스트" in s for s in env8.source_texts()))
+
+    # previous_results 가 있으면 그쪽이 정본 — input_data 가 그걸 밀어내면 안 된다
+    env9 = HandoffEnvelope.from_context("x", {
+        "previous_results": {"internet_agent": {"content": {"answer": "스테이지 본문"}}},
+        "input_data": "보조 자료",
+    })
+    txt9 = " ".join(env9.source_texts())
+    t("H-9 previous_results 우선, input_data 는 보조로 함께",
+      "스테이지 본문" in txt9 and "보조 자료" in txt9
+      and env9.stages[0]["agent_id"] == "internet_agent")
+
     # ══════════ ② extract_series_llm ══════════
     GDP = {"has_data": True, "title": "GDP", "unit": "%", "series": [
         {"label": "2020년", "value": -0.7}, {"label": "2021년", "value": 4.3},

@@ -135,6 +135,27 @@ class HandoffEnvelope:
                 if isinstance(dp, list) and len(dp) >= 2:
                     env.data_points = dp
 
+        # 오케스트레이터가 직접 세우는 단일 자료 키.
+        # `ontology/orchestrator/execution_engine.py` 가 `input_data` 를 세우고,
+        # docx·pptx·llm_search·summarization 이 각자 사설로 읽어 왔다. 계약이 이걸
+        # 빠뜨리면 get_handoff 로 갈아탄 에이전트만 데이터를 못 보게 된다 —
+        # 계약을 만들었다는 것과 계약이 실경로를 덮는다는 것은 다른 이야기다.
+        # previous_results 가 정본이므로 **뒤에** 붙인다 (밀어내지 않고 보조로).
+        seen = {s["text"] for s in env.stages if s.get("text")}
+        for key in ("input_data", "content", "previous_result"):
+            val = ctx.get(key)
+            if not val:
+                continue
+            text = readable_text(val)
+            if not text or not text.strip() or text in seen:
+                continue
+            seen.add(text)
+            env.stages.append({"agent_id": key, "result": val, "text": text})
+            if env.data_points is None and isinstance(val, dict):
+                dp = val.get("data_points")
+                if isinstance(dp, list) and len(dp) >= 2:
+                    env.data_points = dp
+
         # 입력 자체 처리 (문자열 핸드오프 실경로 / dict 입력)
         if isinstance(query, str):
             env.sub_query = query
