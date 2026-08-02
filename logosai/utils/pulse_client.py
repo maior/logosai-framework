@@ -141,7 +141,14 @@ async def _post(endpoint: str, data: dict):
 
     상태 코드를 확인한다 — 확인하지 않던 탓에 llm_calls 의 422 거부가
     3주간 성공으로 집계됐다.
+
+    ``LOGOS_PULSE_DISABLED`` 가 참이면 아무것도 보내지 않는다 (2026-08-02).
+    테스트가 실제 관측 시스템에 데이터를 남기면 진짜 신호와 구분할 수 없다 —
+    인가 이벤트를 배선한 뒤 실제로 테스트 발 이벤트가 대시보드에 올라왔다.
+    스풀에도 넣지 않는다(나중에 재전송되면 같은 오염이 된다).
     """
+    if str(os.getenv("LOGOS_PULSE_DISABLED", "")).strip().lower() in ("1", "true", "yes", "on"):
+        return
     try:
         import aiohttp
         async with aiohttp.ClientSession() as session:
