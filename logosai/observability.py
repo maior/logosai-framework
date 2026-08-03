@@ -34,8 +34,15 @@ def auto_observe_enabled(agent: Any) -> bool:
     return os.getenv("LOGOSAI_AUTO_OBSERVE", "true").lower() == "true"
 
 
-def start_agent_span(agent_id: str, query: Any):
-    """에이전트 실행 root/child span 시작. 실패해도 None 반환(비침습)."""
+def start_agent_span(agent_id: str, query: Any, harness_meta: Optional[dict] = None):
+    """에이전트 실행 root/child span 시작. 실패해도 None 반환(비침습).
+
+    harness_meta 를 span metadata 에 실어 보내는 이유(2026-08-03): 하네스 한도는
+    **에이전트 프로세스의 env** 로 정해지는데, 관측 쪽(Pulse)은 그 env 를 볼 수 없다.
+    한도를 모르면 "실행시간이 한도에 얼마나 근접했나"를 판정할 수 없고, 더 나쁘게는
+    '차단 0건'이 정상인지 계측이 죽은 건지 구분할 수 없다. 이미 보내는 payload 에
+    필드 몇 개를 얹는 것뿐이라 새 이벤트를 쏟지 않는다.
+    """
     try:
         from logosai.utils.trace_span import TraceSpan
         return TraceSpan.start(
@@ -43,6 +50,7 @@ def start_agent_span(agent_id: str, query: Any):
             agent_id=str(agent_id),
             input_text=str(query)[:500],
             stage="agent",
+            metadata=dict(harness_meta or {}),
         )
     except Exception:
         return None
@@ -140,6 +148,49 @@ def _budget_response(agent_id: str, exc: Exception):
     )
 
 
+def _budget_kind(message: str) -> str:
+    """예산 초과 메시지 → 어느 상한에 걸렸나 ('calls' | 'tokens' | 'unknown').
+
+    guardrails 가 내는 문구('LLM call budget exceeded' / 'token budget exceeded')
+    를 그대로 분류한다. 문구가 바뀌면 unknown 으로 떨어질 뿐 발행은 유지된다.
+    """
+    m = str(message or "").lower()
+    if "call budget" in m:
+        return "calls"
+    if "token budget" in m:
+        return "tokens"
+    return "unknown"
+
+
+def emit_harness_block(kind: str, agent_id: str, detail: str,
+                       payload: Optional[dict] = None) -> None:
+    """하네스가 실행을 잘랐다는 사실을 런타임 이벤트로 발행 (2026-08-03).
+
+    이 발행이 없던 동안 하네스는 '보이지 않는 가드레일'이었다 — 타임아웃으로
+    잘린 실행이 span 에 status=error 로만 남아 일반 오류와 구분되지 않았고,
+    ACP 경로에서는 execution 레코드조차 나가지 않았다(부모 trace 존재 시 미발행).
+
+    **전이에서만 발행**한다: 정상 실행은 이 함수를 지나지 않는다. 차단이 일어난
+    순간에만 호출되므로 정상 트래픽마다 이벤트가 쏟아질 여지가 없다.
+    fire-and-forget — 발행이 실패해도 에이전트 실행을 절대 막지 않는다.
+    """
+    try:
+        from logosai.utils.pulse_client import send_event_bg
+        body = {"agent_id": str(agent_id), "detail": str(detail)[:300]}
+        body.update(payload or {})
+        send_event_bg(
+            f"harness.{kind}",
+            source="logosai.harness",
+            agent_id=str(agent_id),
+            # 차단은 크래시가 아니라 '의도된 절단'이다. 그러나 사용자 요청은
+            # 미완으로 끝났으므로 info 가 아닌 warning.
+            severity="warning",
+            payload=body,
+        )
+    except Exception:
+        pass
+
+
 def _current_trace_id() -> Optional[str]:
     try:
         from logosai.utils.trace_span import get_current_trace_id
@@ -168,12 +219,10 @@ def observe_process(process_fn: Callable) -> Callable:
         agent_id = getattr(self, "id", None) or type(self).__name__
         # 부모 trace 유무는 span 시작 '전에' 판정 (start 가 ContextVar 를 세팅하므로).
         had_parent = _current_trace_id() is not None
-        span = start_agent_span(agent_id, query) if observe else None
-        t0 = time.monotonic()
-        success, err = True, None
         # 실행 예산(호출/토큰 상한) — harness 활성 시에만. begin 은 wait_for
         # 태스크 생성 '전' 바깥 컨텍스트에서 (caps 가 복사되어 하위 호출에 보임).
         budget_tok = None
+        max_calls = max_tokens = None
         if h_enabled:
             try:
                 from logosai.utils.guardrails import begin_execution_budget
@@ -181,6 +230,17 @@ def observe_process(process_fn: Callable) -> Callable:
                 budget_tok = begin_execution_budget(max_calls, max_tokens)
             except Exception:
                 budget_tok = None
+        # 유효 한도를 span 에 실어 관측 쪽이 '한도 대비 실행시간'을 판정할 수 있게.
+        # 한도 결정(resolve_harness_budget)이 span 시작보다 앞서야 하므로 순서를 옮겼다.
+        h_meta = {}
+        if h_enabled:
+            h_meta = {"harness_timeout_s": h_timeout,
+                      "harness_max_calls": max_calls,
+                      "harness_max_tokens": max_tokens}
+        span = start_agent_span(agent_id, query, h_meta) if observe else None
+        t0 = time.monotonic()
+        success, err = True, None
+        block_kind = None  # 하네스 차단 종류 — span metadata 로도 남긴다
         try:
             if h_enabled and h_timeout and h_timeout > 0:
                 try:
@@ -189,10 +249,17 @@ def observe_process(process_fn: Callable) -> Callable:
                 except _aio.TimeoutError:
                     # 하네스 타임아웃 — 매달리지 않고 graceful error 반환.
                     success, err = False, f"harness timeout ({h_timeout}s)"
+                    block_kind = "timeout"
+                    emit_harness_block("timeout", agent_id, err,
+                                       {"timeout_s": h_timeout})
                     return _timeout_response(agent_id, h_timeout)
             return await process_fn(self, query, context)
         except _HarnessBudgetExceeded as be:  # 호출/토큰 상한 초과 → graceful
             success, err = False, str(be)
+            block_kind = "budget"
+            emit_harness_block("budget_exceeded", agent_id, err,
+                               {"budget_kind": _budget_kind(err),
+                                "max_calls": max_calls, "max_tokens": max_tokens})
             return _budget_response(agent_id, be)
         except Exception as e:  # noqa: BLE001 — 성공/실패 관측 후 원래 예외 재전파
             success, err = False, str(e)
@@ -207,7 +274,13 @@ def observe_process(process_fn: Callable) -> Callable:
             dur_ms = (time.monotonic() - t0) * 1000.0
             try:
                 if span is not None:
-                    span.end(success=success, output="")
+                    # 차단이면 사유를 span 본문·metadata 에 남긴다. 예전엔 output=""
+                    # 이라 "status=error 인데 왜인지 알 수 없는 span" 만 남았다.
+                    span.end(
+                        success=success,
+                        output=(err or "") if block_kind else "",
+                        metadata={"harness_block": block_kind} if block_kind else None,
+                    )
             except Exception:
                 pass
             # execution 레코드는 관측 on + standalone(부모 trace 없음)에서만.
