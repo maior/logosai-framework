@@ -74,14 +74,85 @@ def emit_agent_execution(agent_id: str, query: Any, success: bool,
         pass
 
 
+#: 에이전트별 한도 재정의 resolver — 호스트(ACP 등)가 꽂는 **운영자 계층** (2026-08-03).
+#:
+#: 왜 훅인가 — 30일 실측에서 한도에 근접한 상위 4개가 전부 데스크톱·문서 계열이었다
+#: (desktop_agent 101.8s = 한도의 84.8%). PowerPoint 를 몰고 Word 를 만드는 일은
+#: 본성상 느린데, 1초에 끝나는 calculator 와 같은 120초를 쓰고 있었다. 성격이 다른
+#: 121개가 한 한도를 공유하는 것이 문제였다.
+#:
+#: 그렇다고 `logosai` 가 저장소를 알면 안 된다 — SDK 는 어디서든 돌아야 한다.
+#: 그래서 훅만 노출하고 구현은 호스트가 꽂는다(이 저장소의 "Judge ABC = 교체 이음새"
+#: 패턴과 같다). 미등록이 기본값이라 꽂지 않으면 동작은 이전과 완전히 동일하다.
+_harness_override_resolver: Optional[Any] = None
+
+
+def set_harness_override_resolver(fn: Optional[Any]) -> None:
+    """에이전트별 한도 재정의 resolver 등록. `None` 이면 해제.
+
+    fn(agent_id: str) -> dict | None
+      dict 키(전부 선택): timeout_s(float) · max_llm_calls(int) · max_tokens(int)
+
+    ⚠️ resolver 는 **실행을 막을 권한이 없다.** 예외를 던지든 쓰레기를 주든
+    조용히 무시되고 다음 단계(env→기본값)로 간다. 저장소가 죽었다고 에이전트가
+    멈추면, 편의를 위해 넣은 계층이 가용성을 떨어뜨리는 셈이 된다.
+    """
+    global _harness_override_resolver
+    _harness_override_resolver = fn
+
+
+def harness_agent_id(agent: Any) -> str:
+    """resolver 조회와 span 기록에 **같은 id** 를 쓰기 위한 단일 출처.
+
+    이게 어긋나면 운영자는 `desktop_agent` 에 재정의를 걸고 resolver 는
+    `DesktopAgent` 를 찾는다 — 아무 오류 없이 그냥 안 먹는, 가장 나쁜 실패다.
+    """
+    return str(getattr(agent, "id", None) or type(agent).__name__)
+
+
+def _override_for(agent: Any) -> Optional[dict]:
+    """등록된 resolver 에게 재정의를 묻는다. 무엇이 잘못되든 None.
+
+    실행당 최대 2회 호출된다(타임아웃 1회 + 예산 1회). 호스트가 캐시할 것을
+    전제한다 — resolve_* 는 실행마다 불린다.
+    """
+    fn = _harness_override_resolver
+    if fn is None:
+        return None
+    try:
+        ov = fn(harness_agent_id(agent))
+    except Exception:
+        return None          # 저장소 장애 → 재정의만 없던 일. 실행은 그대로.
+    return ov if isinstance(ov, dict) else None
+
+
+def _positive(v: Any, cast) -> Optional[Any]:
+    """양수만 통과. 쓰레기(문자열·None·bool·0·음수)는 None → 다음 단계로.
+
+    저장소가 오염돼도 실행 한도가 이상해지면 안 된다.
+    bool 을 막는 이유: `float(True) == 1.0` 이라 `timeout_s: true` 가 1초가 된다.
+    """
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        n = cast(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
 def resolve_harness(agent: Any):
     """이 에이전트에 하네스(실행 타임아웃)를 적용할지 + 타임아웃 초.
 
-    반환: (enabled, timeout_s). attr opt-out > env opt-out > 타임아웃 결정.
+    반환: (enabled, timeout_s). 우선순위(docs/tracks.md §1 동결):
       - agent._harness is False → 미적용.
       - env LOGOSAI_HARNESS in {off,false,0,no} → 미적용.
-      - agent._harness=숫자(초) 또는 {"timeout_s": n} → 그 값.
+      - agent._harness=숫자(초) 또는 {"timeout_s": n} → 그 값.  ← 코드가 왕
+      - 재정의 resolver 의 timeout_s → 그 값.                   ← 운영자 계층
       - 아니면 env LOGOSAI_HARNESS_TIMEOUT(기본 120초).
+
+    opt-out 두 줄이 재정의보다 **위**인 것은 의도다. 재정의로 하네스를 되살릴 수
+    있으면 코드의 명시적 거부(`_harness=False`)가 무의미해진다.
     """
     h = getattr(agent, "_harness", None)
     if h is False:
@@ -93,6 +164,10 @@ def resolve_harness(agent: Any):
         timeout = float(h)
     elif isinstance(h, dict) and h.get("timeout_s"):
         timeout = float(h["timeout_s"])
+    if timeout is None:
+        ov = _override_for(agent)
+        if ov is not None:
+            timeout = _positive(ov.get("timeout_s"), float)
     if timeout is None:
         try:
             timeout = float(os.getenv("LOGOSAI_HARNESS_TIMEOUT", "120"))
@@ -112,9 +187,12 @@ def _timeout_response(agent_id: str, timeout_s: float):
 def resolve_harness_budget(agent: Any):
     """실행당 LLM 호출/토큰 상한 결정. (max_calls, max_tokens), 미설정은 None.
 
-    소스: _harness dict(max_llm_calls/max_tokens) > env(LOGOSAI_HARNESS_MAX_CALLS
-    /LOGOSAI_HARNESS_MAX_TOKENS) > 기본(25 호출 / 200000 토큰).
+    소스: _harness dict(max_llm_calls/max_tokens) > **재정의 resolver** >
+    env(LOGOSAI_HARNESS_MAX_CALLS/LOGOSAI_HARNESS_MAX_TOKENS) > 기본(25/200000).
     호출부는 harness enabled 일 때만 부른다(opt-out 은 resolve_harness 가 게이트).
+
+    두 항목을 **따로** 채운다 — 재정의가 `max_llm_calls` 만 줬다면 토큰 상한은
+    env·기본값을 그대로 따른다. 부분 재정의가 나머지를 지우면 안 된다.
     """
     max_calls: Optional[int] = None
     max_tokens: Optional[int] = None
@@ -124,6 +202,13 @@ def resolve_harness_budget(agent: Any):
             max_calls = int(h["max_llm_calls"])
         if h.get("max_tokens") is not None:
             max_tokens = int(h["max_tokens"])
+    if max_calls is None or max_tokens is None:
+        ov = _override_for(agent)
+        if ov is not None:
+            if max_calls is None:
+                max_calls = _positive(ov.get("max_llm_calls"), int)
+            if max_tokens is None:
+                max_tokens = _positive(ov.get("max_tokens"), int)
     if max_calls is None:
         try:
             max_calls = int(os.getenv("LOGOSAI_HARNESS_MAX_CALLS", "25"))
@@ -216,7 +301,8 @@ def observe_process(process_fn: Callable) -> Callable:
         if not observe and not h_enabled:
             return await process_fn(self, query, context)
 
-        agent_id = getattr(self, "id", None) or type(self).__name__
+        # resolver 조회와 같은 함수를 쓴다 — 둘이 어긋나면 재정의가 조용히 안 먹는다.
+        agent_id = harness_agent_id(self)
         # 부모 trace 유무는 span 시작 '전에' 판정 (start 가 ContextVar 를 세팅하므로).
         had_parent = _current_trace_id() is not None
         # 실행 예산(호출/토큰 상한) — harness 활성 시에만. begin 은 wait_for
