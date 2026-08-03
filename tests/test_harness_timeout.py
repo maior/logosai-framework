@@ -19,6 +19,11 @@ import time
 _PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PKG)
 
+# 이 테스트는 진짜 하네스 차단을 일으킨다. 차단은 이제 Pulse 로 런타임 이벤트를
+# 발행하므로(observability.emit_harness_block), 그냥 두면 테스트 실행이 운영
+# 관측 DB 에 가짜 장애 신호를 남긴다. 관측 데이터에 합성 데이터를 넣지 않는다.
+os.environ["LOGOS_PULSE_DISABLED"] = "1"
+
 
 def run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
@@ -44,7 +49,7 @@ def main():
     rec = {"exec": []}
     obs.emit_agent_execution = lambda agent_id, query, success, duration_ms, output="", error=None: \
         rec["exec"].append({"success": success})
-    obs.start_agent_span = lambda agent_id, query: type("S", (), {"end": lambda self, *a, **k: None})()
+    obs.start_agent_span = lambda agent_id, query, harness_meta=None: type("S", (), {"end": lambda self, *a, **k: None})()
 
     class SlowAgent(SimpleAgent):
         async def process(self, query, context=None):

@@ -49,7 +49,7 @@ def main():
         def end(self, *a, **k):
             pass
 
-    def fake_span(agent_id, query):
+    def fake_span(agent_id, query, harness_meta=None):
         rec["span"] += 1
         return _FakeSpan()
 
