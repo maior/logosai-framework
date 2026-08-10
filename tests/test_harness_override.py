@@ -30,7 +30,11 @@ _PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PKG)
 
 # 관측 DB 에 테스트 흔적을 남기지 않는다 (이 저장소의 확립된 규칙).
-os.environ["LOGOS_PULSE_DISABLED"] = "1"
+# 2026-08-09: pytest 하에서는 세우지 않는다 — os.environ 은 프로세스 전역이라
+# 되돌려지지 않고 남아, 전송 경로를 검증하는 다른 파일의 테스트를 조용히 죽인다.
+# pytest 하에서는 pulse_client 가 스스로 막으므로 보호는 유지된다.
+if "pytest" not in sys.modules:
+    os.environ["LOGOS_PULSE_DISABLED"] = "1"
 
 
 class _Agent:

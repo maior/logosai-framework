@@ -22,7 +22,11 @@ sys.path.insert(0, _PKG)
 # 이 테스트는 진짜 하네스 차단을 일으킨다. 차단은 이제 Pulse 로 런타임 이벤트를
 # 발행하므로(observability.emit_harness_block), 그냥 두면 테스트 실행이 운영
 # 관측 DB 에 가짜 장애 신호를 남긴다. 관측 데이터에 합성 데이터를 넣지 않는다.
-os.environ["LOGOS_PULSE_DISABLED"] = "1"
+# 2026-08-09: pytest 하에서는 세우지 않는다 — os.environ 은 프로세스 전역이라
+# 되돌려지지 않고 남아, 전송 경로를 검증하는 다른 파일의 테스트를 조용히 죽인다.
+# pytest 하에서는 pulse_client 가 스스로 막으므로 보호는 유지된다.
+if "pytest" not in sys.modules:
+    os.environ["LOGOS_PULSE_DISABLED"] = "1"
 
 
 def run(coro):

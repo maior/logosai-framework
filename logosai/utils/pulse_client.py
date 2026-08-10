@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import sys
 import json
 import logging
 import asyncio
@@ -122,6 +123,30 @@ async def _replay_spool(session) -> None:
         _replaying = False
 
 
+def _truthy(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _under_test() -> bool:
+    """테스트 실행 중인가. pytest 가 매 테스트마다 세우는 변수를 본다.
+
+    수집(collection) 단계에는 아직 없으므로 실행 모듈 존재도 함께 본다.
+    """
+    return "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules
+
+
+def _sending_blocked() -> bool:
+    """전송을 막아야 하는가.
+
+    명시적 차단이 최우선 — opt-in 이 그것을 뒤집으면 안 된다.
+    """
+    if _truthy("LOGOS_PULSE_DISABLED"):
+        return True
+    if _under_test() and not _truthy("LOGOSAI_PULSE_ALLOW_IN_TESTS"):
+        return True
+    return False
+
+
 def _record_failure(reason: str) -> None:
     """실패를 집계하고 주기적으로만 경고한다."""
     global _last_warn_ts
@@ -146,8 +171,15 @@ async def _post(endpoint: str, data: dict):
     테스트가 실제 관측 시스템에 데이터를 남기면 진짜 신호와 구분할 수 없다 —
     인가 이벤트를 배선한 뒤 실제로 테스트 발 이벤트가 대시보드에 올라왔다.
     스풀에도 넣지 않는다(나중에 재전송되면 같은 오염이 된다).
+
+    2026-08-09: **테스트 실행 중이면 기본으로 막는다.** 위 스위치는 사람이
+    켜야 했고, 그래서 안 켜졌다 — `orchestrator.stream_with_orchestrator`
+    span 25건이 실제 Pulse DB 에 들어가 "ingress 유실" 로 오독됐다.
+    (스풀이 7분 뒤 배달하는 바람에 즉시 측정으로는 잡히지도 않았다.)
+    잊을 수 있는 방어는 방어가 아니므로 감지를 기본값으로 두고,
+    Pulse 전송 자체를 검증해야 하는 테스트만 명시적으로 푼다.
     """
-    if str(os.getenv("LOGOS_PULSE_DISABLED", "")).strip().lower() in ("1", "true", "yes", "on"):
+    if _sending_blocked():
         return
     try:
         import aiohttp

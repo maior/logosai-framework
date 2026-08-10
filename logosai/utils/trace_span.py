@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Context variable for trace propagation (thread/async safe)
 _current_trace_id: ContextVar[Optional[str]] = ContextVar('_current_trace_id', default=None)
 _current_span_id: ContextVar[Optional[str]] = ContextVar('_current_span_id', default=None)
+# 현재 실행 중인 에이전트. LLM 비용·메트릭 귀속의 근거다.
+# 공유 가변 필드로 들고 있으면 동시 요청끼리 덮어써 미실행 에이전트에 비용이 붙는다.
+_current_agent_id: ContextVar[Optional[str]] = ContextVar('_current_agent_id', default=None)
 
 
 @dataclass
@@ -48,6 +51,11 @@ class TraceSpan:
     metadata: Dict[str, Any] = field(default_factory=dict)
     _token_trace: Any = field(default=None, repr=False)
     _token_span: Any = field(default=None, repr=False)
+    _token_agent: Any = field(default=None, repr=False)
+    # 이미 닫혔는가 (2026-08-09). root span 종료를 `finally` 로 보장하면
+    # 정상 분기는 end() 를 두 번 겪는다 — 이중 전송과 ContextVar 토큰 재사용
+    # (`Token has already been used once`)을 여기서 막는다.
+    _ended: bool = field(default=False, repr=False)
 
     @classmethod
     def start(
@@ -83,12 +91,19 @@ class TraceSpan:
         # Context에 현재 span 등록 (자식 span이 자동으로 parent 참조)
         span._token_trace = _current_trace_id.set(span.trace_id)
         span._token_span = _current_span_id.set(span.id)
+        # agent_id 가 있을 때만 소유권 갱신 — llm.*/tool_* 처럼 비어 있는 span 은
+        # 조상 에이전트의 소유권을 지우면 안 된다.
+        if agent_id:
+            span._token_agent = _current_agent_id.set(agent_id)
 
         logger.debug(f"Span start: {name} (trace={span.trace_id[:8]}, parent={span.parent_id[:8] if span.parent_id else 'root'})")
         return span
 
     def end(self, success: bool = True, output: str = "", metadata: Optional[Dict] = None):
-        """Span 종료 + LogosPulse 전송."""
+        """Span 종료 + LogosPulse 전송. 두 번째 호출부터는 무동작(멱등)."""
+        if self._ended:
+            return
+        self._ended = True
         self.end_time = time.time()
         self.duration_ms = (self.end_time - self.start_time) * 1000
         self.status = "success" if success else "error"
@@ -101,6 +116,8 @@ class TraceSpan:
             _current_trace_id.reset(self._token_trace)
         if self._token_span:
             _current_span_id.reset(self._token_span)
+        if self._token_agent:
+            _current_agent_id.reset(self._token_agent)
 
         # LogosPulse에 전송 (fire-and-forget)
         try:
@@ -164,6 +181,10 @@ def get_current_trace_id() -> Optional[str]:
 
 def get_current_span_id() -> Optional[str]:
     return _current_span_id.get()
+
+def get_current_agent_id() -> Optional[str]:
+    """현재 실행 중인 에이전트 (LLM 비용 귀속용). 모르면 None — 추측하지 않는다."""
+    return _current_agent_id.get()
 
 
 # ──────────────────────────────────────────────────────────────────

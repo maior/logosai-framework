@@ -75,6 +75,7 @@ class HttpToolMixin:
             _span = TraceSpan.start(
                 name=f"tool_http({m} {path})",
                 input_text=str(payload or params or "")[:200],
+                stage="harness_tool",  # 이름 모양이 아니라 태그로 분류되게
             )
         except Exception:
             _span = None

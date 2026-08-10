@@ -20,6 +20,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from logosai.utils import pulse_client
 
+# 이 파일은 **전송 경로 자체**를 검증하므로, 2026-08-09 에 도입한
+# "테스트 중 기본 차단" 을 명시적으로 푼다. monkeypatch 라 이 모듈 밖으로
+# 새지 않는다 — 전역으로 세우면 막으려던 그 오염이 다시 열린다.
+try:
+    import pytest
+
+    @pytest.fixture(autouse=True)
+    def _allow_pulse_sending(monkeypatch):
+        monkeypatch.setenv("LOGOSAI_PULSE_ALLOW_IN_TESTS", "1")
+except ImportError:  # 직접 실행 경로는 __main__ 에서 세운다
+    pass
+
+
 
 # ── 상태 코드를 지정할 수 있는 최소 스텁 서버 ──────────────────
 class _StubHandler(BaseHTTPRequestHandler):
@@ -117,6 +130,7 @@ def test_repeated_failures_accumulate():
 
 
 if __name__ == "__main__":
+    os.environ["LOGOSAI_PULSE_ALLOW_IN_TESTS"] = "1"  # 직접 실행 시에도 전송 허용
     _original = pulse_client.PULSE_URL
     _original_spool = pulse_client._SPOOL_PATH
     # 실패 전송은 스풀에 쌓인다 — 테스트가 사용자의 실제 스풀을 오염시키면 안 된다

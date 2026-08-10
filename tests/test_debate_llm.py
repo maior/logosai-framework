@@ -189,7 +189,7 @@ class TestLLMDebateUnit:
             )
         ]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             system._ask_agent_for_role(agents[0], "test", analyses)
         )
         assert result["role"] == "대출 심사 수행"
