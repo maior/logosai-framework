@@ -97,6 +97,52 @@ def parse_data_points_text(text: str) -> Optional[List[Dict[str, Any]]]:
     return None
 
 
+# ACP/오케스트레이터 봉투 메타 키 — 이 키들만 남은 dict 는 껍데기로 보고 안으로 들어간다.
+# (형제 데이터 키가 남아 있으면 들어가지 않는다 — 들어가는 순간 그 형제를 잃는다.
+#  currency_exchange_agent 의 {"result": 산문, "raw_data": [{"rate": 1418}]} 가 정확히
+#  그 모양이고, 2026-08-10 C1 에서 rate 1418 이 이렇게 사라졌다.)
+_ENVELOPE_KEYS = frozenset({
+    "success", "error", "message", "type", "status", "metadata",
+    "timestamp", "agent_id", "stage_id",
+})
+
+
+def _structured_payload(result: Any, depth: int = 4) -> Optional[Dict[str, Any]]:
+    """구조화 payload 를 형제 키 손실 없이 꺼낸다 (없으면 None)."""
+    cur = result
+    for _ in range(depth):
+        if not isinstance(cur, dict):
+            return None
+        inner = None
+        for key in ("result", "data", "content"):
+            child = cur.get(key)
+            if isinstance(child, dict) and set(cur) - {key} <= _ENVELOPE_KEYS:
+                inner = child
+                break
+        if inner is None:
+            break
+        cur = inner
+    return cur if isinstance(cur, dict) else None
+
+
+def _search_key(payload: Any, key: str, max_depth: int = 6) -> Any:
+    """payload 안에서 key 의 값을 얕은 층부터 찾는다 (BFS — 최상위 동명 키가 이긴다)."""
+    level: List[Any] = [payload]
+    for _ in range(max_depth):
+        if not level:
+            break
+        nxt: List[Any] = []
+        for node in level:
+            if isinstance(node, dict):
+                if key in node and node[key] is not None:
+                    return node[key]
+                nxt.extend(node.values())
+            elif isinstance(node, (list, tuple)):
+                nxt.extend(node)
+        level = nxt
+    return None
+
+
 @dataclass
 class HandoffEnvelope:
     """스테이지 간 표준 수신 봉투."""
@@ -182,3 +228,36 @@ class HandoffEnvelope:
     def best_query(self) -> str:
         """추출 프롬프트의 [사용자 요청]으로 쓸 텍스트 — 원 쿼리 우선."""
         return self.original_query or self.sub_query
+
+    # ── 구조화 접근 (2026-08-10) ──────────────────────────────────────
+    #
+    # 여태 소비 통로가 `source_texts()`(산문) 하나뿐이었다. 상류가 숫자를
+    # 구조화로 내도(currency 의 raw_data[0].rate = 1418) 소비자는 산문을
+    # 재파싱할 수밖에 없었고, 재파싱이 실패한 자리가 C1 엑셀의 ₩0 이다.
+    # 텍스트 경로는 건드리지 않는다 — JSON 덤프가 섞이면 LLM 추출이 오염된다
+    # (readable_text 주석의 그 이유). 구조화는 별도 통로로 낸다.
+
+    def structured(self) -> List[Dict[str, Any]]:
+        """스테이지별 구조화 payload — [{"agent_id", "data"}], 산문화 이전 dict."""
+        out: List[Dict[str, Any]] = []
+        for stage in self.stages:
+            payload = _structured_payload(stage.get("result"))
+            if payload:
+                out.append({"agent_id": stage.get("agent_id", ""), "data": payload})
+        return out
+
+    def find_value(self, key: str, agent_id: Optional[str] = None,
+                   default: Any = None) -> Any:
+        """상류 구조화 결과에서 key 의 값을 찾는다 (없으면 default).
+
+        **산문을 긁지 않는다** — 못 찾으면 default 를 돌려주고, 소비자는 그
+        사실을 보고 스스로 판단한다. 조용히 산문에서 숫자를 주워오면 소비자는
+        데이터를 받았다고 착각한다(C1 의 ₩0 이 그 착각의 산물이다).
+        """
+        for item in self.structured():
+            if agent_id is not None and item["agent_id"] != agent_id:
+                continue
+            found = _search_key(item["data"], key)
+            if found is not None:
+                return found
+        return default
