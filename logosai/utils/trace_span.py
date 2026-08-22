@@ -31,6 +31,14 @@ _current_span_id: ContextVar[Optional[str]] = ContextVar('_current_span_id', def
 # 현재 실행 중인 에이전트. LLM 비용·메트릭 귀속의 근거다.
 # 공유 가변 필드로 들고 있으면 동시 요청끼리 덮어써 미실행 에이전트에 비용이 붙는다.
 _current_agent_id: ContextVar[Optional[str]] = ContextVar('_current_agent_id', default=None)
+# 현재 '실행'(= 하나의 요청 경계). LLM 비용이 매달릴 execution 행의 id 다.
+#
+# trace_id 로는 안 된다 (2026-08-22): 오케스트레이터가 다단계 워크플로를 한 trace 로
+# 묶으므로 한 trace 에 실행이 여럿이다. trace 를 실행 id 로 쓰면 단계들이 같은 PK 로
+# UPSERT 되어 서로를 덮어쓴다(실측 30일: 요청 228 → 행 70).
+# 공유 필드가 아니라 ContextVar 인 이유는 `_current_agent_id` 와 같다 —
+# 동시 요청이 섞이면 실행하지도 않은 에이전트에 비용이 붙는다(2026-07-19).
+_current_execution_id: ContextVar[Optional[str]] = ContextVar('_current_execution_id', default=None)
 
 
 @dataclass
@@ -52,6 +60,7 @@ class TraceSpan:
     _token_trace: Any = field(default=None, repr=False)
     _token_span: Any = field(default=None, repr=False)
     _token_agent: Any = field(default=None, repr=False)
+    _token_exec: Any = field(default=None, repr=False)
     # 이미 닫혔는가 (2026-08-09). root span 종료를 `finally` 로 보장하면
     # 정상 분기는 end() 를 두 번 겪는다 — 이중 전송과 ContextVar 토큰 재사용
     # (`Token has already been used once`)을 여기서 막는다.
@@ -67,8 +76,18 @@ class TraceSpan:
         parent_id: str = "",
         metadata: Optional[Dict] = None,
         stage: str = "",
+        execution_root: bool = False,
     ) -> 'TraceSpan':
-        """새 Span 시작. context에 자동 등록."""
+        """새 Span 시작. context에 자동 등록.
+
+        Args:
+            execution_root: 이 span 이 하나의 **실행**(요청 경계)이라고 선언한다.
+                그러면 이 안에서 일어나는 LLM 비용이 이 span 의 id 를 실행 id 로
+                삼는다. 한 trace 에 실행이 여럿일 수 있으므로(다단계 워크플로)
+                trace_id 를 실행 id 로 쓰면 안 된다 — `_current_execution_id` 주석 참조.
+                선언하지 않으면 소유권을 건드리지 않는다: `llm.*`/`tool_*` 같은
+                span 이 실행 소유권을 가로채면 비용이 자기 자신에게 붙는다.
+        """
         # trace_id: 새 트레이스 or 기존 이어받기
         effective_trace_id = trace_id or _current_trace_id.get() or str(uuid4())
         effective_parent_id = parent_id or _current_span_id.get() or ""
@@ -95,6 +114,8 @@ class TraceSpan:
         # 조상 에이전트의 소유권을 지우면 안 된다.
         if agent_id:
             span._token_agent = _current_agent_id.set(agent_id)
+        if execution_root:
+            span._token_exec = _current_execution_id.set(span.id)
 
         logger.debug(f"Span start: {name} (trace={span.trace_id[:8]}, parent={span.parent_id[:8] if span.parent_id else 'root'})")
         return span
@@ -118,6 +139,8 @@ class TraceSpan:
             _current_span_id.reset(self._token_span)
         if self._token_agent:
             _current_agent_id.reset(self._token_agent)
+        if self._token_exec:
+            _current_execution_id.reset(self._token_exec)
 
         # LogosPulse에 전송 (fire-and-forget)
         try:
@@ -178,6 +201,15 @@ class TraceSpan:
 # Helper: 현재 trace/span ID 가져오기
 def get_current_trace_id() -> Optional[str]:
     return _current_trace_id.get()
+
+def get_current_execution_id() -> Optional[str]:
+    """현재 실행(요청 경계)의 id. 선언된 실행 루트가 없으면 None.
+
+    None 을 trace_id 로 대신 채우지 않는다 — 폴백이 옳은지는 호출자가 안다.
+    (배치는 1 배치 = 1 trace = 1 실행이라 trace_id 폴백이 맞고,
+     다단계 워크플로는 그렇지 않다.)
+    """
+    return _current_execution_id.get()
 
 def get_current_span_id() -> Optional[str]:
     return _current_span_id.get()
