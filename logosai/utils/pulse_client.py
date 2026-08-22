@@ -216,12 +216,18 @@ async def send_execution(
     cost_usd: float = 0.0,
     metadata: Optional[Dict[str, Any]] = None,
     execution_id: Optional[str] = None,  # N1 (2026-05-09): TraceSpan trace_id 로 link
+    agent_revision: str = "",  # G1 (2026-08-22): 12자 hex, 빈 값 = 모름
 ) -> None:
     """에이전트 실행 기록 전송.
 
     N1: execution_id 를 명시 지정하면 LogosPulse 가 그 UUID 로 execution 저장.
     그러면 같은 trace_id 를 가진 span 들이 /traces/{execution_id}/tree 에서 조회 가능.
     None 이면 LogosPulse 가 자동 UUID 생성 (legacy 호환).
+
+    G1: agent_revision 은 이 실행이 *어느 코드*였는지를 12자로 스탬프한다
+    (`logosai.review.finding.revision_of`). 없으면 개선 전후 비교가 상관일 뿐
+    귀속이 아니다. **빈 문자열은 '모름'이고 수신 측에서 NULL 로 저장된다** —
+    키를 빼지 말 것. 모름 자체가 기록돼야 계측 공백을 셀 수 있다.
     """
     payload = {
         "agent_id": agent_id,
@@ -236,6 +242,7 @@ async def send_execution(
         "token_count": token_count,
         "cost_usd": cost_usd,
         "metadata": metadata,
+        "agent_revision": agent_revision,
     }
     # ID 를 서버에 맡기면 스풀 재전송 때마다 새 행이 생긴다.
     # 클라이언트가 발급하면 record_execution 의 UPSERT 가 멱등하게 흡수한다.
