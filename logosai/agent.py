@@ -778,7 +778,11 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
             if score >= 0 and score < 0.3:
                 result = await self.process(query, context)  # retry
         """
-        if not os.environ.get("LOGOSAI_SELF_EVAL"):
+        # 값을 본다 (2026-08-22). 존재만 보면 `=false` 도 켜진다 —
+        # opt-in 플래그를 끌 방법이 "변수를 지우는 것"뿐이면 그건 플래그가 아니다.
+        # (같은 형태를 LOGOSAI_CONTINUOUS_IMPROVE 에서 먼저 발견했다.)
+        if str(os.environ.get("LOGOSAI_SELF_EVAL", "")).strip().lower() \
+                not in ("1", "true", "yes", "on"):
             return -1.0
 
         try:
