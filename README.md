@@ -410,7 +410,9 @@ cd ~/logosai
 
 **Core**: Python 3.11+, aiohttp, pydantic, loguru
 
-**LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai, langchain
+**LLM** (`pip install logosai[llm]`): openai, anthropic, google-genai — native SDKs, no langchain
+
+**LangChain** (`pip install logosai[langchain]`): opt-in only, for legacy integrations
 
 **Desktop Agent**: macOS: Peekaboo + Accessibility · Ubuntu: xdotool, xclip, scrot
 
