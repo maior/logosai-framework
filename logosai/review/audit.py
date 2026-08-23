@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .rules import RULES
+from .rules import RuleSet
+from .rules_logos import DEFAULT_RULES
 
 #: 대조군을 담는 가짜 층. 정밀도 모집단이 아니므로 가중 집계에서 제외된다.
 CONTROL_STRATUM: Tuple[str, str] = ("__control__", "")
@@ -258,7 +259,9 @@ _AUDIT_HEADER = """\
 """
 
 
-def build_audit_prompt(item: Mapping[str, Any], context: str) -> str:
+def build_audit_prompt(
+    item: Mapping[str, Any], context: str, rules: RuleSet = DEFAULT_RULES
+) -> str:
     """한 건의 판정 프롬프트.
 
     두 가지를 **의도적으로 뺀다**:
@@ -271,7 +274,7 @@ def build_audit_prompt(item: Mapping[str, Any], context: str) -> str:
     `item["is_control"]` 도 프롬프트에 나타나지 않는다 — 대조군임이 드러나면
     자기 감사가 무의미해진다.
     """
-    rule = next((r for r in RULES if r.id == str(item.get("rule_id"))), None)
+    rule = rules.get(str(item.get("rule_id")))
     title = rule.title if rule else "(알 수 없는 규칙)"
     hint = rule.detect_hint if rule else ""
     return (

@@ -16,7 +16,8 @@ test_review_prompt.py 가 이 경계를 강제한다.
 
 from typing import Optional, Sequence
 
-from .rules import RULES
+from .rules import RuleSet
+from .rules_logos import DEFAULT_RULES
 
 _HEADER = """\
 당신은 이 코드베이스의 에이전트 코드를 검토한다. 목적은 문법 오류 찾기가 아니다 —
@@ -27,7 +28,7 @@ ruff·mypy 가 이미 그 일을 한다. 당신은 **실행은 성공하는데 �
 (레지스트리 밖 rule_id 는 버려진다).
 
 각 발견마다 반드시 다음을 낸다:
-  rule_id   목록의 id (예: R-001)
+  rule_id   목록의 id (예: __EXAMPLE_RULE_ID__)
   severity  blocker | major | minor
   line      결함이 있는 행 번호
   excerpt   **그 행에 실제로 있는 문자열을 그대로** 옮긴 것
@@ -44,20 +45,29 @@ excerpt 가 실제 소스와 대조되지 않으면 그 발견은 버려진다. 
 _RULE_LINE = "  {id}  [{severity}] {title}\n        판정: {hint}\n"
 
 
-def build_review_prompt(rule_ids: Optional[Sequence[str]] = None) -> str:
+def build_review_prompt(
+    rule_ids: Optional[Sequence[str]] = None,
+    rules: RuleSet = DEFAULT_RULES,
+) -> str:
     """리뷰어 시스템 프롬프트를 만든다.
 
     Args:
         rule_ids: 사용할 규칙 id. None 이면 전부.
                   Phase 0 census 이후 값 없는 규칙을 솎아낼 때 쓴다.
+        rules: 규칙셋. 기본값은 Logos 참조 인스턴스이며, 다른 조직은 자기
+               `RuleSet` 을 주입한다 — incident 미유출 보장은 남의 규칙에도
+               똑같이 걸린다.
 
     incident 필드는 의도적으로 제외한다 — 모듈 docstring 참조.
     """
-    wanted = list(rule_ids) if rule_ids else None
-    lines = [_HEADER, "\n[규칙]\n"]
-    for rule in RULES:
-        if wanted is not None and rule.id not in wanted:
-            continue
+    if len(rules) == 0:
+        # "목록에 있는 것만 보고하라" + 빈 목록 = 반드시 빈 결과. 조용히 태우지 않는다.
+        raise ValueError("빈 규칙셋으로는 프롬프트를 만들 수 없다")
+    selected = rules.subset(rule_ids) if rule_ids else rules
+    # 예시 id 는 실제 규칙셋에서 뽑는다 — 하드코딩하면 남의 규칙셋에 우리 id 가 샌다.
+    header = _HEADER.replace("__EXAMPLE_RULE_ID__", selected.ids[0])
+    lines = [header, "\n[규칙]\n"]
+    for rule in selected:
         lines.append(
             _RULE_LINE.format(
                 id=rule.id,

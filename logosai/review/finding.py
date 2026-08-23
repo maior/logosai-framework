@@ -26,9 +26,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Dict, List, Sequence
 
-from .rules import get_rule
+#: 심각도 어휘의 정본은 `rules.py` 다 — 규칙이 먼저 갖고 발견이 물려받는다.
+#: 여기서 다시 정의하면 두 정의가 곧 갈린다. 재수입해 이름만 유지한다.
+from .rules import SEVERITIES, get_rule  # noqa: F401  (SEVERITIES 는 재수출)
 
-SEVERITIES = ("blocker", "major", "minor")
 TARGETS = ("template", "block", "instance")
 
 _WS = re.compile(r"\s+")

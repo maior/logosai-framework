@@ -25,7 +25,8 @@ from .finding import (
     revision_of,
     validate_finding,
 )
-from .rules import RULES, Rule, get_rule
+from .rules import Rule, RuleSet, get_rule
+from .rules_logos import RULES, DEFAULT_RULES
 
 __all__ = [
     "SEVERITIES",
@@ -40,6 +41,8 @@ __all__ = [
     "revision_of",
     "validate_finding",
     "RULES",
+    "DEFAULT_RULES",
     "Rule",
+    "RuleSet",
     "get_rule",
 ]
