@@ -49,12 +49,20 @@ def _get_default_provider():
         return "google"
 
 
+def _get_base_url():
+    """온-프렘 OpenAI-호환 endpoint base_url (config/env). 없으면 None."""
+    try:
+        from ..config.llm_defaults import get_base_url
+        return get_base_url()
+    except Exception:
+        return None
+
+
 # 프로바이더별 라이브러리 임포트 (선택적)
 _PROVIDERS_AVAILABLE = {}
 
-# OpenAI
+# OpenAI — native SDK 만 필요 (langchain 미사용, 2026-07-07 전면 native 화)
 try:
-    from langchain_openai import ChatOpenAI
     from openai import AsyncOpenAI
     _PROVIDERS_AVAILABLE["openai"] = True
 except ImportError:
@@ -68,21 +76,48 @@ try:
 except ImportError:
     _PROVIDERS_AVAILABLE["google"] = False
 
-# Anthropic
+# Anthropic — native SDK 만 필요
 try:
     from anthropic import AsyncAnthropic
-    from langchain_anthropic import ChatAnthropic
     _PROVIDERS_AVAILABLE["anthropic"] = True
 except ImportError:
     _PROVIDERS_AVAILABLE["anthropic"] = False
 
-# Ollama (로컬 LLM)
-try:
-    from langchain_community.llms import Ollama
-    from langchain_community.chat_models import ChatOllama
-    _PROVIDERS_AVAILABLE["ollama"] = True
-except ImportError:
-    _PROVIDERS_AVAILABLE["ollama"] = False
+# Ollama (로컬 LLM) — OpenAI-호환 /v1 endpoint 를 openai SDK 로 호출
+# (LangChain 커뮤니티 패키지 불필요 — 온-프렘 base_url 설계와 동일 메커니즘)
+_PROVIDERS_AVAILABLE["ollama"] = _PROVIDERS_AVAILABLE["openai"]
+
+# ── OpenAI-호환 프로바이더 레지스트리 (2026-07-07 진화) ─────────────────
+# 업계 표준이 된 OpenAI-호환 API 를 지렛대로 프로바이더 폭을 흡수한다.
+# 항목: base_url + api_key_env (키 불요 로컬 서버는 api_key_env=None).
+# config(~/.logosai/config.json llm.providers.<name>)로 코드 수정 없이 확장.
+_COMPAT_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "ollama":     {"base_url": "http://localhost:11434/v1", "api_key_env": None},
+    "groq":       {"base_url": "https://api.groq.com/openai/v1", "api_key_env": "GROQ_API_KEY"},
+    "deepseek":   {"base_url": "https://api.deepseek.com/v1", "api_key_env": "DEEPSEEK_API_KEY"},
+    "together":   {"base_url": "https://api.together.xyz/v1", "api_key_env": "TOGETHER_API_KEY"},
+    "fireworks":  {"base_url": "https://api.fireworks.ai/inference/v1", "api_key_env": "FIREWORKS_API_KEY"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "api_key_env": "OPENROUTER_API_KEY"},
+    "mistral":    {"base_url": "https://api.mistral.ai/v1", "api_key_env": "MISTRAL_API_KEY"},
+    "xai":        {"base_url": "https://api.x.ai/v1", "api_key_env": "XAI_API_KEY"},
+    "perplexity": {"base_url": "https://api.perplexity.ai", "api_key_env": "PERPLEXITY_API_KEY"},
+}
+
+
+def _get_extra_providers() -> Dict[str, Dict[str, Any]]:
+    """config(llm.providers) 로 정의된 사용자 확장 프로바이더 (없으면 {})."""
+    try:
+        from ..config.llm_defaults import get_extra_providers
+        return get_extra_providers() or {}
+    except Exception:
+        return {}
+
+
+def _resolve_compat_provider(name: str) -> Optional[Dict[str, Any]]:
+    """내장 ∪ config 레지스트리에서 OpenAI-호환 프로바이더 정의 조회."""
+    merged = dict(_COMPAT_PROVIDERS)
+    merged.update(_get_extra_providers())
+    return merged.get(name)
 
 from .llm_settings import get_provider_settings, get_default_llm_settings, get_api_key
 
@@ -164,13 +199,14 @@ class LLMClient:
     
     def __init__(
         self,
-        provider: str = "google",
+        provider: Optional[str] = None,
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         top_p: Optional[float] = None,
         timeout: Optional[int] = None,
+        base_url: Optional[str] = None,
         **kwargs
     ):
         """
@@ -186,8 +222,16 @@ class LLMClient:
             timeout: 타임아웃(초)
             **kwargs: 기타 프로바이더별 설정
         """
+        # 프로바이더 config-driven (2026-07-07): 미지정 시 ~/.logosai/config.json
+        # (llm.provider) / env(LOGOSAI_LLM_PROVIDER)에서 결정. 명시 인자는 우선.
+        # 온-프렘 등 프로바이더 전환을 설정만으로 가능하게 한다.
+        if provider is None:
+            provider = _get_default_provider()
         self.provider = provider.lower()
         self.model = model
+        # 온-프렘 OpenAI-호환 endpoint (2026-07-07): 미지정 시 config/env 에서.
+        # vLLM/LMStudio/Ollama(/v1)/TGI/LocalAI 를 openai 프로바이더로 사용.
+        self.base_url = base_url if base_url is not None else _get_base_url()
         self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -195,25 +239,52 @@ class LLMClient:
         self.timeout = timeout
         self.extra_params = kwargs
         
-        # 프로바이더 유효성 검사
-        if self.provider not in [p.value for p in LLMProvider]:
-            raise ValueError(f"지원되지 않는 프로바이더: {provider}")
-        
-        # 프로바이더 라이브러리 사용 가능성 검사
-        if not _PROVIDERS_AVAILABLE.get(self.provider, False):
+        # 프로바이더 해석 (2026-07-07 진화): 1군 native(openai/google/anthropic)
+        # → 2군 OpenAI-호환 레지스트리(내장 ∪ config llm.providers)
+        # → base_url 단독 generic. enum 제약 제거로 "다양한 LLM 소화".
+        self._compat = False
+        self._compat_api_key_env: Optional[str] = None
+        if self.provider in ("openai", "google", "anthropic"):
+            pass  # 1군 native
+        else:
+            compat_def = _resolve_compat_provider(self.provider)
+            if compat_def is not None:
+                self._compat = True
+                self._compat_api_key_env = compat_def.get("api_key_env")
+                # 명시 base_url > extra_params.base_url > 레지스트리 기본
+                # (config llm.base_url 은 기본 프로바이더 온-프렘용 — 여기 미적용)
+                self.base_url = (
+                    base_url
+                    or self.extra_params.get("base_url")
+                    or compat_def.get("base_url")
+                )
+            elif self.base_url:
+                self._compat = True  # 이름 없는 generic 호환 서버
+            else:
+                _known = sorted(
+                    {"openai", "google", "anthropic"}
+                    | set(_COMPAT_PROVIDERS)
+                    | set(_get_extra_providers())
+                )
+                raise ValueError(
+                    f"지원되지 않는 프로바이더: {provider}. "
+                    f"가용: {', '.join(_known)} (또는 base_url 로 OpenAI-호환 서버 직접 지정, "
+                    f"config llm.providers 로 확장 가능)"
+                )
+
+        # 프로바이더 라이브러리 사용 가능성 검사 (호환 계열은 openai SDK 필요)
+        _lib_key = "openai" if self._compat else self.provider
+        if not _PROVIDERS_AVAILABLE.get(_lib_key, False):
             raise ImportError(f"{provider} 프로바이더에 필요한 라이브러리가 설치되지 않았습니다.")
         
         # 기본 설정 사용 (설정 로딩 비활성화)
         # self._load_settings()  # 임시로 비활성화
         
-        # 기본값 설정
+        # 기본값 설정 — 모델은 프로바이더 무관 config-driven(2026-07-07).
+        # 과거엔 openai 만 "gpt-4.1-mini" 로 하드코딩돼 config/env 모델(온-프렘
+        # Qwen 등)이 무시됐다. 이제 미지정 시 항상 _get_default_model()(config/env).
         if not self.model:
-            if self.provider == "openai":
-                self.model = "gpt-4.1-mini"
-            elif self.provider == "google":
-                self.model = _get_default_model()
-            else:
-                self.model = _get_default_model()
+            self.model = _get_default_model()
         
         if not self.api_key:
             import os
@@ -221,6 +292,20 @@ class LLMClient:
                 self.api_key = os.getenv("OPENAI_API_KEY")
             elif self.provider == "google":
                 self.api_key = os.getenv("GOOGLE_API_KEY")
+            elif self.provider == "anthropic":
+                self.api_key = os.getenv("ANTHROPIC_API_KEY")
+            elif self._compat and self._compat_api_key_env:
+                self.api_key = os.getenv(self._compat_api_key_env)
+
+        # 호환 계열: 키 불요 서버(ollama 등, api_key_env=None)는 placeholder —
+        # openai SDK 가 None 키로 실패하는 것 방지 (로컬 서버는 아무 키나 허용)
+        if self._compat and not self.api_key and not self._compat_api_key_env:
+            self.api_key = "sk-compat-local"
+
+        # 온-프렘: base_url 설정 + openai + 키 없음 → placeholder(로컬 서버는
+        # 대개 아무 키나 허용). AsyncOpenAI 가 None 키로 실패하는 것 방지.
+        if self.provider == "openai" and self.base_url and not self.api_key:
+            self.api_key = "sk-local-onprem"
         
         if self.max_tokens is None:
             self.max_tokens = 2000
@@ -264,34 +349,16 @@ class LLMClient:
         
         try:
             if self.provider == "openai":
-                # AsyncOpenAI 클라이언트 생성 (안전한 방식)
-                try:
-                    self._client = AsyncOpenAI(api_key=self.api_key)
-                except Exception as e:
-                    logger.warning(f"AsyncOpenAI 클라이언트 생성 중 오류 (무시): {e}")
-                    self._client = None
-                
-                # LangChain ChatOpenAI 클라이언트 초기화 (안전한 방식)
-                try:
-                    self._langchain_client = ChatOpenAI(
-                        model=self.model,
-                        temperature=self.temperature,
-                        max_tokens=self.max_tokens,
-                        api_key=self.api_key
-                    )
-                except Exception as e:
-                    logger.error(f"ChatOpenAI 클라이언트 생성 실패: {e}")
-                    # 최소한의 파라미터로 재시도
-                    try:
-                        self._langchain_client = ChatOpenAI(
-                            model=self.model,
-                            api_key=self.api_key
-                        )
-                        logger.info("최소 파라미터로 ChatOpenAI 클라이언트 생성 성공")
-                    except Exception as e2:
-                        logger.error(f"최소 파라미터 ChatOpenAI 클라이언트 생성도 실패: {e2}")
-                        self._langchain_client = None
-            
+                # native AsyncOpenAI 단일 경로 (base_url 설정 시 온-프렘 endpoint).
+                # LangChain 챗 래퍼는 2026-07-07 제거 — 직접 구현이 설계 의도.
+                _oai_kwargs = {"api_key": self.api_key}
+                if self.base_url:
+                    _oai_kwargs["base_url"] = self.base_url
+                self._client = AsyncOpenAI(**_oai_kwargs)
+                self._langchain_client = None
+                if self.base_url:
+                    logger.info(f"LLM 클라이언트 초기화(온-프렘): {self.provider}/{self.model} @ {self.base_url}")
+
             elif self.provider == "google":
                 # API 키가 설정되어 있는지 확인
                 if not self.api_key:
@@ -302,20 +369,19 @@ class LLMClient:
                 # Google은 별도의 LangChain 클라이언트 초기화 하지 않음 (직접 API 사용)
             
             elif self.provider == "anthropic":
+                # native AsyncAnthropic 단일 경로 (LangChain 챗 래퍼 제거)
                 self._client = AsyncAnthropic(api_key=self.api_key)
-                self._langchain_client = ChatAnthropic(
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    api_key=self.api_key
+                self._langchain_client = None
+
+            elif self._compat:
+                # OpenAI-호환 계열 (ollama/groq/deepseek/... + config 확장 + generic)
+                # — 전부 openai SDK 하나로 소화 (레지스트리가 base_url/키 규약 제공)
+                self._client = AsyncOpenAI(
+                    api_key=self.api_key or "sk-compat-local",
+                    base_url=self.base_url,
                 )
-            
-            elif self.provider == "ollama":
-                self._langchain_client = ChatOllama(
-                    model=self.model,
-                    temperature=self.temperature,
-                    **self.extra_params
-                )
+                self._langchain_client = None
+                logger.info(f"LLM 클라이언트 초기화(OpenAI-호환): {self.provider}/{self.model} @ {self.base_url}")
             
             self._initialized = True
             logger.info(f"LLM 클라이언트 초기화 완료: {self.provider}/{self.model}")
@@ -352,6 +418,14 @@ class LLMClient:
         if self.provider == "google":
             async for chunk in self._stream_google(message, system_prompt):
                 yield chunk
+        elif self.provider == "openai" or self._compat:
+            # OpenAI-호환 진짜 토큰 스트리밍 (2026-07-07 — 기존엔 google 전용)
+            async for chunk in self._stream_openai_compat(message, system_prompt):
+                yield chunk
+        elif self.provider == "anthropic":
+            # Anthropic native 토큰 스트리밍 (2026-07-19 — 기존엔 전문 1회 폴백)
+            async for chunk in self._stream_anthropic(message, system_prompt):
+                yield chunk
         else:
             # Fallback: non-streaming (yield full response)
             msgs = []
@@ -360,6 +434,48 @@ class LLMClient:
             msgs.append(LLMMessage(role="user", content=message))
             response = await self.invoke_messages(msgs)
             yield response.content
+
+    async def _stream_openai_compat(self, message: str, system_prompt: str = None):
+        """OpenAI-호환 chat.completions 토큰 스트리밍."""
+        api_messages = []
+        if system_prompt:
+            api_messages.append({"role": "system", "content": system_prompt})
+        api_messages.append({"role": "user", "content": message})
+        stream = await self._client.chat.completions.create(
+            model=self.model,
+            messages=api_messages,
+            temperature=self.temperature,
+            stream=True,
+        )
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content
+            except (AttributeError, IndexError):
+                delta = None
+            if delta:
+                yield delta
+
+    async def _stream_anthropic(self, message: str, system_prompt: str = None):
+        """Anthropic Messages API 토큰 스트리밍.
+
+        SDK 계약(anthropic>=0.96): `messages.stream(...)` 이 async context
+        manager 를 돌려주고 `.text_stream` 이 텍스트 델타를 준다.
+        _call_anthropic 과 동일하게 system 은 messages 배열이 아니라 top-level
+        파라미터로 보낸다.
+        """
+        _kwargs = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": message}],
+            "max_tokens": self.max_tokens or 1024,
+            "temperature": self.temperature,
+        }
+        if system_prompt:
+            _kwargs["system"] = system_prompt
+
+        async with self._client.messages.stream(**_kwargs) as stream:
+            async for text in stream.text_stream:
+                if text:
+                    yield text
 
     async def _stream_google(self, message: str, system_prompt: str = None):
         """Google Gemini streaming."""
@@ -442,6 +558,15 @@ class LLMClient:
                 raise
             logger.debug(f"Guardrail check: {guard_err}")
 
+        # Harness per-execution budget: 호출 상한 사전 점검 (예산 미활성 시 no-op).
+        # HarnessBudgetExceeded 는 상위 하네스 래퍼로 전파되어 graceful error 로.
+        try:
+            from .guardrails import precheck_llm_call
+        except ImportError:
+            precheck_llm_call = None
+        if precheck_llm_call is not None:
+            precheck_llm_call()
+
         max_retries = kwargs.pop("_max_retries", 2)
         last_error = None
         _start_time = _time.time()
@@ -455,16 +580,23 @@ class LLMClient:
 
         for attempt in range(max_retries + 1):
             try:
-                if self.provider == "openai":
+                if self.provider == "openai" or self._compat:
+                    # native openai + OpenAI-호환 계열(ollama/groq/... /generic)
                     response = await self._call_openai(formatted_messages, **kwargs)
                 elif self.provider == "google":
                     response = await self._call_google(formatted_messages, **kwargs)
                 elif self.provider == "anthropic":
                     response = await self._call_anthropic(formatted_messages, **kwargs)
-                elif self.provider == "ollama":
-                    response = await self._call_ollama(formatted_messages, **kwargs)
                 else:
                     raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
+
+                # Harness per-execution budget: 토큰(비용) 누적 (예산 미활성 시 no-op).
+                try:
+                    from .guardrails import record_llm_tokens
+                    _bt = self._extract_token_usage(response)
+                    record_llm_tokens(_bt.get("input", 0), _bt.get("output", 0))
+                except Exception:
+                    pass  # 예산 계측이 LLM 응답을 절대 훼손하지 않도록
 
                 # Observability: report metrics
                 _duration = (_time.time() - _start_time) * 1000
@@ -491,6 +623,7 @@ class LLMClient:
                         name=f"llm.{self.model}",
                         agent_id="",
                         input_text=_prompt_preview,
+                        stage="llm",
                     )
                     # start_time을 실제 호출 시작으로 보정
                     _llm_span.start_time = _start_time
@@ -550,9 +683,141 @@ class LLMClient:
 
         if self.provider == "google":
             return await self._call_google_with_tools(formatted, tools, **kwargs)
-        else:
-            # Non-Google: 도구 설명을 시스템 프롬프트에 포함하는 폴백
-            return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+        if self.provider == "openai" or self._compat:
+            # OpenAI-호환 native function calling (2026-07-07 — 기존엔 프롬프트 폴백).
+            # 일부 호환 서버는 tools 미지원 → 실패 시 기존 폴백으로 강등.
+            try:
+                return await self._call_openai_with_tools(formatted, tools, **kwargs)
+            except Exception as e:
+                logger.warning(f"native tool calling 실패, 프롬프트 폴백: {e}")
+                return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+        if self.provider == "anthropic":
+            # Anthropic native tool use (2026-07-19 — 기존엔 프롬프트 폴백).
+            # openai 경로와 동일하게, 실패 시 조용히 폴백으로 강등한다.
+            try:
+                return await self._call_anthropic_with_tools(formatted, tools, **kwargs)
+            except Exception as e:
+                logger.warning(f"anthropic native tool calling 실패, 프롬프트 폴백: {e}")
+                return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+        # 그 외: 도구 설명을 시스템 프롬프트에 포함하는 폴백
+        return await self._call_with_tools_fallback(formatted, tools, **kwargs)
+
+    async def _call_openai_with_tools(
+        self,
+        messages: List[LLMMessage],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """OpenAI-호환 native function calling."""
+        import json as _json
+
+        oai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": {
+                        "type": "object",
+                        "properties": t.get("parameters", {}),
+                    },
+                },
+            }
+            for t in tools
+        ]
+        api_messages = [{"role": m.role, "content": m.content} for m in messages]
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=api_messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            tools=oai_tools,
+        )
+        msg = response.choices[0].message
+        tool_calls = []
+        for tc in (getattr(msg, "tool_calls", None) or []):
+            try:
+                args = _json.loads(tc.function.arguments or "{}")
+            except (ValueError, TypeError):
+                args = {}
+            tool_calls.append(ToolCall(name=tc.function.name, args=args, id=getattr(tc, "id", "")))
+        return LLMResponse(
+            content=msg.content or "",
+            provider=self.provider,
+            model=self.model,
+            tool_calls=tool_calls or None,
+            raw_response=response,
+        )
+
+    async def _call_anthropic_with_tools(
+        self,
+        messages: List[LLMMessage],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """Anthropic native tool use.
+
+        스키마 차이 주의: OpenAI 는 function.parameters, Anthropic 은
+        top-level `input_schema` 를 쓴다. 프레임워크 공통 tools 계약
+        (name/description/parameters=properties dict) 을 여기서 변환한다.
+        응답의 content 는 블록 배열이며 tool_use 블록에 {id, name, input} 이 온다.
+        """
+        anthropic_tools = [
+            {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "input_schema": {
+                    "type": "object",
+                    "properties": t.get("parameters", {}) or {},
+                },
+            }
+            for t in tools
+        ]
+
+        system_parts = [m.content for m in messages if m.role == "system"]
+        api_messages = [
+            {"role": m.role, "content": m.content}
+            for m in messages
+            if m.role in ("user", "assistant")
+        ]
+        _kwargs = {
+            "model": self.model,
+            "messages": api_messages,
+            "max_tokens": self.max_tokens or 1024,
+            "temperature": self.temperature,
+            "tools": anthropic_tools,
+        }
+        if system_parts:
+            _kwargs["system"] = "\n\n".join(system_parts)
+
+        response = await self._client.messages.create(**_kwargs)
+
+        text_parts, tool_calls = [], []
+        for block in (getattr(response, "content", None) or []):
+            btype = getattr(block, "type", None)
+            if btype == "tool_use":
+                tool_calls.append(ToolCall(
+                    name=getattr(block, "name", ""),
+                    args=getattr(block, "input", None) or {},
+                    id=getattr(block, "id", ""),
+                ))
+            else:
+                text = getattr(block, "text", "")
+                if text:
+                    text_parts.append(text)
+
+        usage = getattr(response, "usage", None)
+        return LLMResponse(
+            content="".join(text_parts),
+            provider=self.provider,
+            model=self.model,
+            usage={
+                "input_tokens": getattr(usage, "input_tokens", None),
+                "output_tokens": getattr(usage, "output_tokens", None),
+            } if usage else None,
+            tool_calls=tool_calls or None,
+            raw_response=response,
+        )
 
     async def _call_google_with_tools(
         self,
@@ -703,50 +968,29 @@ class LLMClient:
         return response
 
     async def _call_openai(self, messages: List[LLMMessage], **kwargs) -> LLMResponse:
-        """OpenAI API 호출 (직접 API 사용)"""
-        
-        # LangChain 클라이언트가 있으면 시도
-        if self._langchain_client:
-            try:
-                from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-                
-                lc_messages = []
-                for msg in messages:
-                    if msg.role == "system":
-                        lc_messages.append(SystemMessage(content=msg.content))
-                    elif msg.role == "user":
-                        lc_messages.append(HumanMessage(content=msg.content))
-                    elif msg.role == "assistant":
-                        lc_messages.append(AIMessage(content=msg.content))
-                
-                response = await self._langchain_client.ainvoke(lc_messages)
-                
-                return LLMResponse(
-                    content=response.content,
-                    provider=self.provider,
-                    model=self.model,
-                    raw_response=response
-                )
-            except Exception as e:
-                logger.warning(f"LangChain 호출 실패, 직접 API 호출로 대체: {e}")
-        
-        # 직접 OpenAI API 호출
+        """OpenAI API 호출 — native chat.completions 단일 경로 (langchain 제거)."""
         try:
             from openai import AsyncOpenAI
             import os
-            
+
             # 프록시 환경변수 임시 제거
             proxy_env_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']
             old_proxy_values = {}
-            
+
             for var in proxy_env_vars:
                 if var in os.environ:
                     old_proxy_values[var] = os.environ[var]
                     del os.environ[var]
-            
+
             try:
-                # 새로운 클라이언트 생성 (프록시 설정 없이)
-                direct_client = AsyncOpenAI(api_key=self.api_key)
+                # initialize()의 클라이언트 재사용 (없으면 생성 — 테스트 주입 용이)
+                if self._client is not None:
+                    direct_client = self._client
+                else:
+                    _dc_kwargs = {"api_key": self.api_key}
+                    if self.base_url:
+                        _dc_kwargs["base_url"] = self.base_url
+                    direct_client = AsyncOpenAI(**_dc_kwargs)
                 
                 # 메시지 형식 변환
                 api_messages = []
@@ -943,59 +1187,55 @@ class LLMClient:
         return result
 
     async def _call_anthropic(self, messages: List[LLMMessage], **kwargs) -> LLMResponse:
-        """Anthropic API 호출"""
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-        
-        lc_messages = []
-        for msg in messages:
-            if msg.role == "system":
-                lc_messages.append(SystemMessage(content=msg.content))
-            elif msg.role == "user":
-                lc_messages.append(HumanMessage(content=msg.content))
-            elif msg.role == "assistant":
-                lc_messages.append(AIMessage(content=msg.content))
-        
-        response = await self._langchain_client.ainvoke(lc_messages)
-        
+        """Anthropic API 호출 — native AsyncAnthropic (langchain 제거).
+
+        Anthropic Messages API 계약: system 은 messages 배열이 아니라
+        별도 top-level 파라미터로 전달한다.
+        """
+        system_parts = [m.content for m in messages if m.role == "system"]
+        api_messages = [
+            {"role": m.role, "content": m.content}
+            for m in messages
+            if m.role in ("user", "assistant")
+        ]
+        _kwargs = {
+            "model": self.model,
+            "messages": api_messages,
+            "max_tokens": self.max_tokens or 1024,
+            "temperature": self.temperature,
+        }
+        if system_parts:
+            _kwargs["system"] = "\n\n".join(system_parts)
+
+        response = await self._client.messages.create(**_kwargs)
+        content = "".join(
+            getattr(block, "text", "") for block in (response.content or [])
+        )
+        usage = getattr(response, "usage", None)
         return LLMResponse(
-            content=response.content,
+            content=content,
             provider=self.provider,
             model=self.model,
-            raw_response=response
+            usage={
+                "input_tokens": getattr(usage, "input_tokens", None),
+                "output_tokens": getattr(usage, "output_tokens", None),
+            } if usage else None,
+            raw_response=response,
         )
-    
-    async def _call_ollama(self, messages: List[LLMMessage], **kwargs) -> LLMResponse:
-        """Ollama API 호출"""
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-        
-        lc_messages = []
-        for msg in messages:
-            if msg.role == "system":
-                lc_messages.append(SystemMessage(content=msg.content))
-            elif msg.role == "user":
-                lc_messages.append(HumanMessage(content=msg.content))
-            elif msg.role == "assistant":
-                lc_messages.append(AIMessage(content=msg.content))
-        
-        response = await self._langchain_client.ainvoke(lc_messages)
-        
-        return LLMResponse(
-            content=response.content,
-            provider=self.provider,
-            model=self.model,
-            raw_response=response
-        )
+
+    # (구 _call_ollama 는 OpenAI-호환 통합으로 _call_openai 에 흡수 — 2026-07-07)
     
     def get_langchain_client(self):
-        """LangChain 클라이언트 반환 (기존 코드와의 호환성)"""
+        """LangChain 호환 래퍼 반환 (deprecated — 하위 호환용).
+
+        2026-07-07 전면 native 화 이후 내부에 langchain 클라이언트는 없다.
+        모든 프로바이더에 대해 ainvoke 호환 래퍼(GoogleLangChainWrapper —
+        이름과 달리 langchain 미의존 duck-typing)를 반환한다.
+        신규 코드는 invoke/invoke_messages 를 직접 사용할 것.
+        """
         if not self._initialized:
             raise ValueError("클라이언트가 초기화되지 않았습니다. initialize()를 먼저 호출하세요.")
-        
-        if self.provider == "google":
-            # Google은 직접 API를 사용하므로 LangChain 호환 래퍼 제공
-            return GoogleLangChainWrapper(self)
-        
-        return self._langchain_client
+        return GoogleLangChainWrapper(self)
     
     @classmethod
     def create_openai(cls, model: str = "gpt-4o-mini", temperature: float = 0.7, **kwargs) -> 'LLMClient':

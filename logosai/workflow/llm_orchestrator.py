@@ -54,7 +54,7 @@ LLM Workflow Orchestrator - LLM 기반 워크플로우 생성 및 실행
    - 충돌 해결 규칙
 
 의존성:
-- langchain_google_genai (Gemini 2.5 Flash)
+- logosai.utils.llm_client.LLMClient (google.genai 직접, Gemini)
 - pydantic (데이터 검증)
 - logosai.workflow.models (기본 데이터 모델)
 """
@@ -68,8 +68,9 @@ from enum import Enum
 from datetime import datetime
 import uuid
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate
+# G6 (2026-07-07): LangChain 의 Google 챗 모델 래퍼는 deprecated google
+# 라이브러리 경유로 import/invoke 시 무한 hang 위험(과거 실사) — LLMClient
+# (google.genai 직접)로 교체. 모듈 레벨 LangChain import 제거(hang 소거).
 from pydantic import BaseModel, Field
 from loguru import logger
 
@@ -268,11 +269,9 @@ class LLMWorkflowOrchestrator:
             return
 
         try:
-            self.llm = ChatGoogleGenerativeAI(
-                model=self.model_name,
-                temperature=0.2,  # 결정적인 출력을 위해 낮은 temperature
-                convert_system_message_to_human=True
-            )
+            from logosai.utils.llm_client import LLMClient
+            # google.genai 직접 — langchain hang 위험 없음. temperature 는 호출 시 전달.
+            self.llm = LLMClient(model=self.model_name)
             self._initialized = True
             logger.info(f"✅ LLMWorkflowOrchestrator 초기화 완료 ({self.model_name})")
         except Exception as e:
@@ -413,12 +412,14 @@ class LLMWorkflowOrchestrator:
         start_time = time.time()
 
         try:
-            # 프롬프트 생성
+            # 프롬프트 생성 — {query} 치환 + {{ }} 이스케이프 해제(LangChain f-string
+            # 규약 == str.format 규약이므로 .format 이 정확한 드롭인).
             prompt_template = self._create_orchestration_prompt(available_agents)
-            chain = ChatPromptTemplate.from_template(prompt_template) | self.llm
+            rendered = prompt_template.format(query=query)
 
-            # LLM 호출
-            result = await chain.ainvoke({"query": query})
+            # LLM 호출 (LLMClient — langchain LCEL chain 대체)
+            result = await self.llm.invoke_messages(
+                [{"role": "user", "content": rendered}], temperature=0.2)
 
             # 응답 파싱
             content = result.content if hasattr(result, 'content') else str(result)
@@ -608,8 +609,9 @@ JSON 형식으로 응답:
 }}
 """
         try:
-            chain = ChatPromptTemplate.from_template(prompt) | self.llm
-            result = await chain.ainvoke({})
+            # prompt 는 f-string 으로 이미 query 치환·완성 — 그대로 전송(LLMClient).
+            result = await self.llm.invoke_messages(
+                [{"role": "user", "content": prompt}], temperature=0.2)
             content = result.content if hasattr(result, 'content') else str(result)
 
             # JSON 파싱

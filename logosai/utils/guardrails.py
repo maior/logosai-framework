@@ -125,3 +125,79 @@ def _get_config(key: str, default):
     except Exception:
         pass
     return default
+
+
+# ── Per-execution 하네스 예산 (호출 수·토큰 상한) — P0-2 확장 (2026-07-06) ──
+# 글로벌 RequestCallCounter 와 달리 ContextVar 로 실행별 격리한다.
+# 하네스 래퍼(observability.observe_process)가 process() 진입 시 begin,
+# 종료 시 reset. LLMClient 가 호출 전 precheck / 호출 후 record_tokens 를 부른다.
+# caps 미설정(None)이면 완전 no-op → 비하네스 경로 성능/동작 불변.
+from contextvars import ContextVar
+from typing import Optional as _Optional, Tuple as _Tuple
+
+_exec_calls: ContextVar[int] = ContextVar("_hb_exec_calls", default=0)
+_exec_tokens: ContextVar[int] = ContextVar("_hb_exec_tokens", default=0)
+_exec_max_calls: ContextVar[_Optional[int]] = ContextVar("_hb_max_calls", default=None)
+_exec_max_tokens: ContextVar[_Optional[int]] = ContextVar("_hb_max_tokens", default=None)
+
+
+class HarnessBudgetExceeded(Exception):
+    """실행당 LLM 호출/토큰 상한 초과 — 하네스가 graceful error 로 변환한다."""
+    pass
+
+
+def begin_execution_budget(max_calls: _Optional[int],
+                           max_tokens: _Optional[int]) -> _Tuple:
+    """실행 예산 시작. 반환한 토큰을 reset_execution_budget 에 넘겨 복원한다."""
+    return (
+        _exec_calls.set(0),
+        _exec_tokens.set(0),
+        _exec_max_calls.set(max_calls),
+        _exec_max_tokens.set(max_tokens),
+    )
+
+
+def reset_execution_budget(tokens: _Optional[_Tuple]) -> None:
+    """begin_execution_budget 이 반환한 토큰으로 ContextVar 복원."""
+    if not tokens:
+        return
+    c, t, mc, mt = tokens
+    try:
+        _exec_calls.reset(c)
+        _exec_tokens.reset(t)
+        _exec_max_calls.reset(mc)
+        _exec_max_tokens.reset(mt)
+    except (ValueError, LookupError):
+        # 다른 context 에서 reset 시도(비정상) — 방어적 무시.
+        pass
+
+
+def precheck_llm_call() -> None:
+    """각 LLM 호출 '전' 호출. 예산 미활성이면 no-op.
+
+    누적 토큰이 상한 이상이면 즉시 차단. 아니면 호출 카운트 +1 후 상한 초과 시 차단.
+    """
+    mc = _exec_max_calls.get()
+    mt = _exec_max_tokens.get()
+    if mc is None and mt is None:
+        return  # 예산 미활성
+    if mt is not None and _exec_tokens.get() >= mt:
+        raise HarnessBudgetExceeded(
+            f"token budget exceeded: {_exec_tokens.get()}/{mt}")
+    if mc is not None:
+        n = _exec_calls.get() + 1
+        _exec_calls.set(n)
+        if n > mc:
+            raise HarnessBudgetExceeded(
+                f"LLM call budget exceeded: {n}/{mc}")
+
+
+def record_llm_tokens(input_tokens: int, output_tokens: int) -> None:
+    """LLM 호출 '후' 호출. 토큰 예산 미활성이면 no-op."""
+    if _exec_max_tokens.get() is None:
+        return
+    try:
+        used = int(input_tokens or 0) + int(output_tokens or 0)
+    except (TypeError, ValueError):
+        used = 0
+    _exec_tokens.set(_exec_tokens.get() + used)

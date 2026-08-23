@@ -85,6 +85,8 @@ Always think step by step. Never skip the Thought step."""
         content = ""
 
         for step in range(max_steps):
+            import time as _time_mod
+            _step_t0 = _time_mod.time()
             try:
                 if tools and tool_executors:
                     response = await asyncio.wait_for(
@@ -107,6 +109,19 @@ Always think step by step. Never skip the Thought step."""
             if "Final Answer:" in content:
                 final = content.split("Final Answer:")[-1].strip()
                 trace.append({"step": step + 1, "type": "final", "thought": thought, "answer": final})
+                try:
+                    from ..utils.trace_span import TraceSpan
+                    TraceSpan.record(
+                        name=f"react.final(step{step+1})",
+                        started_at=_step_t0,
+                        agent_id=getattr(self, 'id', self.__class__.__name__),
+                        input_text=f"Thought: {thought}",
+                        output=final[:200],
+                        stage="harness_react",
+                        metadata={"step": step + 1, "type": "final"},
+                    )
+                except Exception:
+                    pass
                 return AgentResponse(
                     type=AgentResponseType.SUCCESS,
                     content={"answer": final, "steps": len(trace), "trace": trace},
@@ -133,6 +148,19 @@ Always think step by step. Never skip the Thought step."""
 
                     trace.append({"step": step + 1, "type": "observation", "tool": tc.name, "result": result_str[:300]})
                     self.logger.info(f"  ReAct [{step+1}] {tc.name} → {result_str[:60]}")
+                    try:  # 여정: Think→Act→Observe 한 사이클을 span으로 기록
+                        from ..utils.trace_span import TraceSpan
+                        TraceSpan.record(
+                            name=f"react.step{step+1}({tc.name})",
+                            started_at=_step_t0,
+                            agent_id=getattr(self, 'id', self.__class__.__name__),
+                            input_text=f"Thought: {thought}",
+                            output=result_str[:200],
+                            stage="harness_react",
+                            metadata={"tool": tc.name, "step": step + 1},
+                        )
+                    except Exception:
+                        pass
 
                     messages.append({"role": "assistant", "content": f"Thought: {thought}\nAction: {tc.name}({tc.args})"})
                     messages.append({"role": "user", "content": f"Observation: {result_str}"})
@@ -140,6 +168,19 @@ Always think step by step. Never skip the Thought step."""
 
             if content.strip():
                 trace.append({"step": step + 1, "type": "final", "thought": thought, "answer": content})
+                try:
+                    from ..utils.trace_span import TraceSpan
+                    TraceSpan.record(
+                        name=f"react.final(step{step+1})",
+                        started_at=_step_t0,
+                        agent_id=getattr(self, 'id', self.__class__.__name__),
+                        input_text=f"Thought: {thought}",
+                        output=content[:200],
+                        stage="harness_react",
+                        metadata={"step": step + 1, "type": "final"},
+                    )
+                except Exception:
+                    pass
                 clean = content
                 for marker in ["Thought:", "Action:", "Observation:"]:
                     if marker in clean:

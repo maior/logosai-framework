@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "logosai"
 version = "0.12.0"
-description = "Build AI agents in 4 lines. Personal AI agent framework — 63+ agents, self-evolving, observable."
+description = "Build AI agents in 4 lines. Orchestrate 63+ agents. Self-evolving. Observable."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
@@ -46,22 +46,44 @@ dev = [
     "isort>=5.10.0",
     "mypy>=0.900",
 ]
+# G8 (2026-07-07): LLM 프로바이더 native SDK 만 — lean 기본. langchain 은
+# 별도 extra(레거시, deprecated google 경유 hang 위험이라 opt-in 격리, G6 참조).
 llm = [
     "openai>=1.0.0",
     "anthropic>=0.3.0",
     "google-genai>=1.0.0",
+]
+# 레거시 LangChain 프로바이더 — 필요 시에만(hang 위험, 권장 안 함).
+langchain = [
     "langchain>=0.1.0",
     "langchain-openai>=0.0.8",
     "langchain-community>=0.0.28",
 ]
+# Agentic 코어(tool use·ReAct·planning)는 base 로 동작. 메모리 임베딩만
+# google.genai 필요(storage/agent_memory_store.py lazy-import).
+agentic = [
+    "google-genai>=1.0.0",
+]
+# 관측/모니터링(TraceSpan·pulse_client)은 base(aiohttp/requests)만으로 동작 —
+# 추가 의존성 없음. 경량성을 명시하기 위한 빈 extra(설치 UX 문서화용).
+monitoring = []
 desktop = [
-    "pyautogui>=0.9.53",
+    # G8 (2026-07-06): 데스크톱 에이전트(logosai.desktop)용 의존성 명시.
+    # 과거엔 pyautogui 가 platform/macos.py 에서 lazy-import 되며 미선언이라
+    # ImportError 시 조용히 기능 비활성 → 명시적 extra 로 노출.
+    "pyautogui>=0.9.50",
     "pillow>=9.0.0",
 ]
-all = [
-    "logosai[llm]",
+# 선택 도구(코어/에이전트가 직접 의존하지 않음 — 예제·확장용).
+tools = [
     "tavily-python>=0.3.0",
     "rich>=13.0.0",
+]
+# 추천 기능 일괄 — 레거시 langchain 은 제외(opt-in 전용).
+all = [
+    "logosai[llm]",
+    "logosai[desktop]",
+    "logosai[tools]",
 ]
 
 [project.urls]
@@ -71,6 +93,8 @@ Repository = "https://github.com/maior/logosai-framework"
 Issues = "https://github.com/maior/logosai-framework/issues"
 
 [project.scripts]
+# 이미 배포된 명령. dev 에는 없지만 main(PyPI)에는 있었다 — 지우면 기존 사용자의
+# `logosai` 명령이 사라진다. personal 모드 진입점(logosai/cli/main.py).
 logosai = "logosai.cli.main:main"
 logosai-serve = "logosai.cli.serve:main"
 logosai-agent = "logosai.cli.agent:main"
@@ -78,6 +102,10 @@ logosai-agent = "logosai.cli.agent:main"
 [tool.setuptools.packages.find]
 include = ["logosai*"]
 exclude = ["logosai.examples*", "tests*"]
+
+# G4 (2026-07-06): py.typed 마커 배포 — 소비자 IDE·mypy 가 타입 힌트를 쓸 수 있게.
+[tool.setuptools.package-data]
+logosai = ["py.typed"]
 
 [tool.black]
 line-length = 88

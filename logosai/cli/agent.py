@@ -110,10 +110,25 @@ def parse_arguments():
         "--history-file",
         help="대화 기록을 저장할 파일 경로"
     )
-    
+
+    # 새 에이전트 스캐폴딩 명령 (Phase 2, 2026-07-06)
+    new_parser = subparsers.add_parser(
+        "new",
+        help="새 에이전트 템플릿(.py) 생성"
+    )
+    new_parser.add_argument(
+        "name",
+        help="에이전트 이름 (snake_case 권장, 예: weather_bot)"
+    )
+    new_parser.add_argument(
+        "--dir",
+        default=".",
+        help="생성 위치 (기본: 현재 디렉토리)"
+    )
+
     # 로깅 설정
     parser.add_argument(
-        "--verbose", 
+        "--verbose",
         "-v", 
         action="store_true", 
         help="상세 로깅 활성화"
@@ -550,6 +565,83 @@ def handle_shell(client, args) -> int:
     return 0
 
 
+def _pascal_case(name: str) -> str:
+    """snake_case / kebab-case / 공백 → PascalCase 클래스명."""
+    import re
+    parts = [p for p in re.split(r"[^0-9A-Za-z]+", name) if p]
+    if not parts:
+        raise ValueError(f"유효하지 않은 에이전트 이름: {name!r}")
+    return "".join(p[:1].upper() + p[1:] for p in parts)
+
+
+_AGENT_TEMPLATE = '''"""{cls} — LogosAI agent (logosai-agent new 로 생성).
+
+실행 예:
+    from logosai.acp import SimpleACPServer
+    SimpleACPServer(port=8888).add({cls}(), "{name}").run()
+"""
+from logosai.simple_agent import SimpleAgent
+from logosai.agent_types import AgentResponse
+
+
+class {cls}(SimpleAgent):
+    """{name} 에이전트. process() 에 로직을 채우세요.
+
+    타임아웃·LLM 호출/토큰 상한·관측(Pulse)은 프레임워크 기본값으로 자동
+    적용됩니다(opt-out 가능). 별도 배선 불필요.
+    """
+
+    async def process(self, query, context=None):
+        # TODO: 에이전트 로직 작성. LLM 이 필요하면 self.ask(query) 등 프레임워크
+        # 헬퍼를 사용하세요(자동 관측·예산에 포함됩니다).
+        return AgentResponse.success(
+            message=f"{cls} 처리 완료",
+            content={{"echo": query}},
+        )
+
+
+if __name__ == "__main__":
+    import asyncio
+    print(asyncio.run({cls}().process("안녕하세요")).message)
+'''
+
+
+def scaffold(name: str, target_dir: str = ".") -> str:
+    """새 에이전트 템플릿 파일을 생성하고 경로를 반환한다.
+
+    Args:
+        name: 에이전트 이름(snake_case 권장). 파일명·클래스명의 근거.
+        target_dir: 생성 위치(기본 현재 디렉토리).
+
+    Raises:
+        ValueError: 이름이 유효하지 않을 때.
+        FileExistsError: 같은 파일이 이미 있을 때(덮어쓰지 않음).
+    """
+    cls = _pascal_case(name)
+    os.makedirs(target_dir, exist_ok=True)
+    path = os.path.join(target_dir, f"{name}.py")
+    if os.path.exists(path):
+        raise FileExistsError(f"이미 존재합니다: {path}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_AGENT_TEMPLATE.format(cls=cls, name=name))
+    return path
+
+
+def handle_new(args) -> int:
+    """new 서브커맨드 처리(서버 불필요)."""
+    try:
+        path = scaffold(args.name, getattr(args, "dir", "."))
+    except FileExistsError as e:
+        print(str(e))
+        return 1
+    except ValueError as e:
+        print(str(e))
+        return 1
+    print(f"✅ 생성됨: {path}")
+    print(f"   실행: python {path}   또는 SimpleACPServer 에 add()")
+    return 0
+
+
 def main():
     """메인 함수"""
     # UUID 파라미터 확인
@@ -572,6 +664,10 @@ def main():
                 logger.debug(f"환경 변수: {key}={safe_value}")
     
     try:
+        # 스캐폴딩은 서버·클라이언트 불필요 — 먼저 처리
+        if args.command == "new":
+            return handle_new(args)
+
         # 클라이언트 생성
         client = create_client(
             endpoint=args.url,

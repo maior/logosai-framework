@@ -1,0 +1,19 @@
+{
+  "_comment": "ACP southbound(Consume) 편입 선언 예시 — acp_server/configs/external_endpoints.json 으로 복사하거나 ACP_EXTERNAL_CONFIG 로 경로 지정. 샘플 서버 2개(mcp_server_sample.py:8901, a2a_server_sample.py:8902)를 가상 에이전트로 편입한다.",
+  "endpoints": [
+    {
+      "id": "sample_tools",
+      "protocol": "mcp",
+      "url": "http://localhost:8901/mcp",
+      "enabled": true,
+      "timeout_seconds": 30
+    },
+    {
+      "id": "partner_summary",
+      "protocol": "a2a",
+      "url": "http://localhost:8902",
+      "enabled": true,
+      "timeout_seconds": 30
+    }
+  ]
+}

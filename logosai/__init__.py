@@ -7,7 +7,13 @@ A Python framework for building, orchestrating, and evolving AI agents.
 import logging as _logging
 import os as _os
 
-__version__ = "0.10.0"
+# 버전 단일 소스 (G5, 2026-07-06): pyproject.toml 이 정본. 설치 메타데이터에서
+# 읽고, 소스 트리 직접 실행 등 메타데이터 부재 시 pyproject 와 일치하는 값으로 폴백.
+try:  # pragma: no cover
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("logosai")
+except Exception:  # noqa: BLE001 — 소스 실행/미설치 폴백
+    __version__ = "0.12.0"
 __author__ = "LogosAI Team"
 __license__ = "MIT"
 __description__ = "Conversational Agent Development Platform"
@@ -301,13 +307,6 @@ try:
     ]
 except ImportError as e:
     _logger.debug("Collaboration system not available: %s", e)
-
-# ── Local Storage (Personal Mode) ──
-try:
-    from .storage import LocalStore
-    __all__ += ["LocalStore"]
-except ImportError as e:
-    _logger.debug("LocalStore not available: %s", e)
 
 # Show SDK info only when explicitly requested
 if _os.getenv("LOGOSAI_SHOW_INFO", "").lower() == "true":

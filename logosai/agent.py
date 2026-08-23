@@ -19,16 +19,13 @@ from typing import Dict, Any, Optional, Union, List, Tuple, TYPE_CHECKING
 from .agent_types import AgentType, AgentResponse, AgentResponseType
 from .config import AgentConfig
 from loguru import logger
-from .mixins import ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin
+from .mixins import ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin, HttpToolMixin, StandardExportMixin
 
 if TYPE_CHECKING:
     from .collaboration import CollaborationService, CollaborationResult, AgentCapability
 
-# Optional LLM dependency
-try:
-    from langchain_openai import ChatOpenAI
-except ImportError:
-    ChatOpenAI = None
+# LLM 클라이언트는 함수 내부에서 지연 import (utils/__init__ 순환 방지)
+# — 구 langchain 챗 래퍼 의존은 제거됨 (2026-07-08 L4 스윕)
 
 from .agent_self_assessment import AgentSelfAssessment, SelfAssessmentResult
 from .dialogue_protocol import SimpleDialogueProtocol, DialogueCapability, DialogueMessage, DialogueTurn
@@ -53,7 +50,7 @@ def _lazy_import_query_optimizer():
 # Logging setup
 logger = logging.getLogger(__name__)
 
-class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin):
+class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAgentMixin, HttpToolMixin, StandardExportMixin):
     """LogosAI Agent Base Class - Conditional Agentic AI Support
 
     Agentic 기능은 Mixin으로 분리되어 있음:
@@ -63,6 +60,29 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
       PlanningMixin — plan(), plan_stream()
       MultiAgentMixin — call_agent, delegate, spawn_agent
     """
+
+    def __init_subclass__(cls, **kwargs):
+        """P0-1 (2026-07-06): 서브클래스가 정의한 process() 를 관측 래퍼로 자동
+        감싼다 → 평범한 에이전트도 그냥 만들면 LogosPulse 에 뜬다(표준 default).
+        opt-out: env LOGOSAI_AUTO_OBSERVE=false 또는 agent._auto_observe=False.
+        직접 정의한 process 만 1회 래핑(상속분은 이미 래핑됨 — 이중 방지)."""
+        super().__init_subclass__(**kwargs)
+        try:
+            proc = cls.__dict__.get("process")
+            if proc is not None:
+                from logosai.observability import observe_process
+                cls.process = observe_process(proc)
+        except Exception:  # noqa: BLE001 — 관측 배선 실패가 클래스 정의를 막지 않음
+            pass
+
+    def get_handoff(self, query=None, context=None):
+        """멀티스테이지 핸드오프 표준 수신 — HandoffEnvelope 반환.
+
+        dict context(previous_results)·직렬화 문자열("[이전 단계 결과]…")·
+        data_points 를 한 계약으로 흡수한다. FORGE 생성물 포함 모든 에이전트의
+        스테이지 수신 지점 (Agentic Upgrade Phase 1, 2026-07-15)."""
+        from logosai.handoff import HandoffEnvelope
+        return HandoffEnvelope.from_context(query, context)
 
     def __init__(self, config: AgentConfig):
         """Initialize agent
@@ -758,7 +778,11 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
             if score >= 0 and score < 0.3:
                 result = await self.process(query, context)  # retry
         """
-        if not os.environ.get("LOGOSAI_SELF_EVAL"):
+        # 값을 본다 (2026-08-22). 존재만 보면 `=false` 도 켜진다 —
+        # opt-in 플래그를 끌 방법이 "변수를 지우는 것"뿐이면 그건 플래그가 아니다.
+        # (같은 형태를 LOGOSAI_CONTINUOUS_IMPROVE 에서 먼저 발견했다.)
+        if str(os.environ.get("LOGOSAI_SELF_EVAL", "")).strip().lower() \
+                not in ("1", "true", "yes", "on"):
             return -1.0
 
         try:
@@ -1326,10 +1350,11 @@ class AgentTemplate:
         # Set session to None so that _process_logic is called
         self.session = None
 
-        self.llm = ChatOpenAI(
-            model_name="gpt-4",
-            temperature=0.3
-        )
+        # LLMClient 기반 ainvoke 호환 객체 — 모델은 config 기본
+        # (구: "gpt-4" 하드코딩 + langchain. 템플릿 상속자들이 이 패턴을
+        #  복제하던 재생산 벡터였음)
+        from .utils.llm_client import GoogleLangChainWrapper, LLMClient
+        self.llm = GoogleLangChainWrapper(LLMClient(temperature=0.3))
         # Create chain
         self.chain = self._create_classification_chain()
 
