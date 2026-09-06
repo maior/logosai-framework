@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/logosai.svg)](https://pypi.org/project/logosai/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-logosai--framework-181717?logo=github)](https://github.com/maior/logosai-framework)
 
 **Build AI agents in 4 lines. Orchestrate 63+ agents. Self-evolving. Observable.**
 
