@@ -174,6 +174,39 @@ class ToolCall:
     id: str = ""
 
 
+#: 프로바이더별 "출력 한도에서 멈춤" 표기 (2026-10-05 실측, max_tokens=20)
+_LENGTH_STOPS = {"MAX_TOKENS", "LENGTH", "MAX_TOKENS_REACHED"}
+_NORMAL_STOPS = {"STOP", "END_TURN", "STOP_SEQUENCE"}
+
+
+def finish_reason_of(raw: Any) -> Optional[str]:
+    """프로바이더 원응답의 종료 사유 → "length"(출력 한도에서 잘림) / "stop" / None(모름).
+
+    google    candidates[0].finish_reason  FinishReason.MAX_TOKENS / STOP
+    openai    choices[0].finish_reason     'length' / 'stop'
+    anthropic stop_reason                  'max_tokens' / 'end_turn'
+    근거가 없으면 None — 모름을 정상으로 바꾸지 않는다.
+    """
+    try:
+        reason = None
+        if getattr(raw, "candidates", None):
+            reason = getattr(raw.candidates[0], "finish_reason", None)
+        elif getattr(raw, "choices", None):
+            reason = getattr(raw.choices[0], "finish_reason", None)
+        elif hasattr(raw, "stop_reason"):
+            reason = raw.stop_reason
+        if reason is None:
+            return None
+        name = str(getattr(reason, "name", reason)).upper()
+        if name in _LENGTH_STOPS:
+            return "length"
+        if name in _NORMAL_STOPS:
+            return "stop"
+        return name.lower()
+    except Exception:
+        return None
+
+
 @dataclass
 class LLMResponse:
     """LLM 응답 표준 구조"""
@@ -590,6 +623,9 @@ class LLMClient:
                 else:
                     raise ValueError(f"지원되지 않는 프로바이더: {self.provider}")
 
+                # 출력 한도 잘림을 드러낸다 — 잘린 응답이 정상 응답처럼 돌아가지 않도록.
+                self._mark_truncation(response, kwargs)
+
                 # Harness per-execution budget: 토큰(비용) 누적 (예산 미활성 시 no-op).
                 try:
                     from .guardrails import record_llm_tokens
@@ -654,7 +690,33 @@ class LLMClient:
                 logger.error(f"LLM 호출 실패 ({max_retries+1}회 시도): {e}")
                 raise
     
+    def _mark_truncation(self, response: "LLMResponse", kwargs: Dict[str, Any]) -> None:
+        """metadata 에 finish_reason·truncated 를 싣고, 잘렸으면 경고한다. 응답을 훼손하지 않는다."""
+        try:
+            reason = finish_reason_of(response.raw_response)
+            response.metadata = dict(response.metadata or {})
+            response.metadata["finish_reason"] = reason
+            response.metadata["truncated"] = None if reason is None else reason == "length"
+            if reason == "length":
+                logger.warning(
+                    f"LLM 응답이 출력 한도에서 잘렸다 — model={self.model}, "
+                    f"max_tokens={kwargs.get('max_tokens', self.max_tokens)}. "
+                    f"max_tokens 를 늘리거나 출력을 줄여라.")
+        except Exception:
+            pass
+
     async def invoke_with_tools(
+        self,
+        messages: List[Union[LLMMessage, Dict[str, str]]],
+        tools: List[Dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """LLM 호출 with function calling (도구 사용) — 응답에 잘림 여부를 싣는다."""
+        response = await self._dispatch_with_tools(messages, tools, **kwargs)
+        self._mark_truncation(response, kwargs)
+        return response
+
+    async def _dispatch_with_tools(
         self,
         messages: List[Union[LLMMessage, Dict[str, str]]],
         tools: List[Dict[str, Any]],
@@ -730,7 +792,7 @@ class LLMClient:
             model=self.model,
             messages=api_messages,
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_tokens=kwargs.get("max_tokens", self.max_tokens),
             tools=oai_tools,
         )
         msg = response.choices[0].message
@@ -783,7 +845,7 @@ class LLMClient:
         _kwargs = {
             "model": self.model,
             "messages": api_messages,
-            "max_tokens": self.max_tokens or 1024,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens) or 1024,
             "temperature": self.temperature,
             "tools": anthropic_tools,
         }
@@ -917,6 +979,7 @@ class LLMClient:
             provider=self.provider,
             model=self.model,
             tool_calls=tool_calls if tool_calls else None,
+            raw_response=response,
         )
 
     async def _call_with_tools_fallback(
@@ -1005,7 +1068,7 @@ class LLMClient:
                     model=self.model,
                     messages=api_messages,
                     temperature=self.temperature,
-                    max_tokens=self.max_tokens
+                    max_tokens=kwargs.get("max_tokens", self.max_tokens)
                 )
                 
                 return LLMResponse(
@@ -1201,7 +1264,7 @@ class LLMClient:
         _kwargs = {
             "model": self.model,
             "messages": api_messages,
-            "max_tokens": self.max_tokens or 1024,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens) or 1024,
             "temperature": self.temperature,
         }
         if system_parts:

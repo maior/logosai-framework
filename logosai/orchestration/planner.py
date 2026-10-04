@@ -270,6 +270,9 @@ class QueryPlanner:
     """사용자 쿼리 → ExecutionPlan. 조직별 지식은 훅을 재정의해 넣는다."""
 
     MODEL = "default"
+    #: 기본 LLM 경로의 출력 한도 — Logos 플래너와 같다. LLMClient 기본(2000)이면
+    #: 다단계 계획 JSON 이 중간에 끊길 수 있다.
+    MAX_TOKENS = 4096
 
     def __init__(
         self,
@@ -403,7 +406,13 @@ class QueryPlanner:
             from logosai.utils.llm_client import LLMClient
             self._llm_client = LLMClient()
             await self._llm_client.initialize()
-        response = await self._llm_client.invoke(prompt)
+        response = await self._llm_client.invoke(prompt, max_tokens=self.MAX_TOKENS)
+        if (getattr(response, "metadata", None) or {}).get("truncated"):
+            raise PlanningError(
+                message=f"계획 응답이 출력 한도({self.MAX_TOKENS} 토큰)에서 잘렸다 — "
+                        f"MAX_TOKENS 를 늘리거나 에이전트 수를 줄여라",
+                llm_response=getattr(response, "content", "")[:500],
+            )
         return getattr(response, "content", str(response))
 
     def _build_planning_prompt(
