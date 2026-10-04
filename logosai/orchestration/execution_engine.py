@@ -685,6 +685,21 @@ class ExecutionEngine:
         if isinstance(data, (int, float, bool)):
             return str(data)
 
+        if not isinstance(data, (dict, list)) and callable(getattr(data, "to_dict", None)):
+            # AgentResponse 등 객체 — dict 를 돌려준 것과 똑같이 다룬다. 전엔 맨 끝의
+            # str(data) 로 떨어져 "<AgentResponse object at 0x...>" 가 다음 단계에 실렸다 —
+            # SDK 실행기(`return await agent.process(...)`)의 단계 간 데이터가 끊겼다.
+            try:
+                plain = data.to_dict()
+            except Exception:
+                return ""
+            if isinstance(plain, dict) and not plain.get("content") and plain.get("message"):
+                # 내용 없는 응답(AgentResponse.error 등) — 하류가 실패를 알아야 지어내지 않는다
+                return str(plain["message"])
+            if isinstance(plain, dict) and "content" in plain:
+                return self._extract_core_result(plain["content"] or None, depth + 1)
+            return self._extract_core_result(plain, depth + 1)
+
         if isinstance(data, dict):
             # 1. Check for direct answer field
             # (str 이어도 재귀 — str 분기의 HTML→텍스트 등 정규화를 통과시킴)
