@@ -26,18 +26,8 @@ LOGOS_SPECIFIC = ["internet_agent", "llm_search_agent", "weather_agent",
                   "samsung_gateway_agent", "삼성", "NAND"]
 
 
-class _BareRegistry(AgentRegistry):
-    """기본 에이전트 없는 레지스트리 — 프롬프트 템플릿만 재기 위해.
-
-    알려진 결함(P2 에서 발견, 범위 밖으로 기록): SDK AgentRegistry 가 처음 쓰일 때
-    DEFAULT_AGENTS(Logos 에이전트 14개)를 자동 등록한다. 2단계 이전 때 그대로 옮겨졌다.
-    logos_api·ontology 가 DEFAULT_AGENTS 를 참조하므로 별도 단계에서 다룬다.
-    """
-    DEFAULT_AGENTS = []
-
-
 def _registry(*agents):
-    reg = _BareRegistry()
+    reg = AgentRegistry()      # SDK 레지스트리는 빈 상태로 시작한다 (2026-10-05)
     for aid, desc in agents:
         reg.register_agent(AgentRegistryEntry(
             agent_id=aid, name=aid, description=desc, capabilities=[], tags=[],
@@ -74,11 +64,6 @@ async def test_plans_end_to_end_with_an_injected_llm():
     assert isinstance(plan, ExecutionPlan)
     assert [[t.agent_id for t in s.agents] for s in plan.stages] == [["alpha_agent"], ["beta_agent"]]
     assert plan.capability_gap is None
-
-
-def test_sdk_registry_still_ships_logos_defaults():
-    """알려진 결함을 숨기지 않는다 — 고치면 이 테스트를 뒤집는다."""
-    assert "internet_agent" in AgentRegistry().get_agent_ids()
 
 
 async def test_default_prompt_carries_registered_agents_only():
