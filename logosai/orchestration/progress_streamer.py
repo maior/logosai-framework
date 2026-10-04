@@ -645,9 +645,18 @@ class ProgressStreamer:
         success: bool = True,
         result_preview: Optional[str] = None,
         full_result: Optional[Any] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        error_event: Optional[bool] = None,
     ) -> None:
-        """Emit agent completion event"""
+        """Emit agent completion event
+
+        error_event: 이벤트 '종류'를 AGENT_ERROR 로 낼지. 기본은 실패면 그렇다(예외 경로).
+        실행기가 실패를 '돌려준' 경우엔 엔진이 False 로 넘긴다 — logos_web 과 logos_api 는
+        agent_complete 만 처리하므로 종류를 바꾸면 카드가 멈추고 출력이 결과에서 빠진다.
+        그 경우 종류는 유지하고 status/error 로 실패를 알린다.
+        """
+        if error_event is None:
+            error_event = not success
         self._active_agents[agent_id] = AgentStatus.COMPLETED if success else AgentStatus.FAILED
         self._completed_agents += 1
 
@@ -664,7 +673,7 @@ class ProgressStreamer:
             event_data["full_result"] = full_result
 
         event = ProgressEvent(
-            type=ProgressEventType.AGENT_COMPLETE if success else ProgressEventType.AGENT_ERROR,
+            type=ProgressEventType.AGENT_ERROR if error_event else ProgressEventType.AGENT_COMPLETE,
             stage_id=stage_id,
             agent_id=agent_id,
             status=AgentStatus.COMPLETED if success else AgentStatus.FAILED,

@@ -164,9 +164,14 @@ class ExecutionEngine:
                 all_stage_results, plan.final_aggregation
             )
 
-            # Determine overall success
-            success = failed_agents == 0 or (
-                successful_agents > 0 and final_output is not None
+            # Determine overall success — 돌려준 실패는 결말을 바꾸지 않는다.
+            # 바꾸면 logos_api 재시도 루프가 같은 에이전트를 다시 부른다 (실측 1→3회).
+            outcome_ok = sum(
+                1 for sr in all_stage_results for r in sr.results
+                if self._counts_for_outcome(r)
+            )
+            success = (total_agents - outcome_ok) == 0 or (
+                outcome_ok > 0 and final_output is not None
             )
 
             result = WorkflowResult(
@@ -250,7 +255,9 @@ class ExecutionEngine:
 
             # Aggregate stage results
             stage_time = (time.time() - stage_start) * 1000
-            success = all(r.success for r in results)
+            # 결말과 핸드오프는 이전과 같다 — 돌려준 실패도 결과로 친다. 하류는 실패
+            # 사실을 알아야 지어내지 않는다 (실측: 빼면 요약 에이전트가 무관한 요약을 지어냈다).
+            success = all(self._counts_for_outcome(r) for r in results)
 
             # Create aggregated output for next stage
             if success:
@@ -260,7 +267,7 @@ class ExecutionEngine:
                     aggregated = [r.data for r in results]
             else:
                 # Include successful results even if some failed
-                aggregated = [r.data for r in results if r.success]
+                aggregated = [r.data for r in results if self._counts_for_outcome(r)]
 
             stage_result = StageResult(
                 stage_id=stage.stage_id,
@@ -358,8 +365,8 @@ class ExecutionEngine:
             )
             results.append(result)
 
-            # Pass output to next agent (for sequential chains)
-            if result.success:
+            # Pass output to next agent (for sequential chains) — 돌려준 실패도 넘긴다
+            if self._counts_for_outcome(result):
                 current_input = result.data
             else:
                 # Continue with None if agent failed
@@ -458,14 +465,18 @@ class ExecutionEngine:
 
                 execution_time = (time.time() - start_time) * 1000
 
-                # Create success result
+                # 예외가 안 났다 ≠ 성공. 실행기가 돌려준 실패를 실패로 기록한다.
+                # 고치는 것은 기록이지 행동이 아니다 — 재시도하지 않는다.
+                failure = self._failure_of(result)
                 agent_result = AgentResult(
                     agent_id=agent_id,
                     stage_id=stage_id,
-                    success=True,
+                    success=not failure,
                     data=result,
+                    error=failure or None,
                     execution_time_ms=execution_time,
                     retry_count=attempt,
+                    metadata={"failure": "returned"} if failure else {},
                 )
 
                 # Store result
@@ -477,9 +488,11 @@ class ExecutionEngine:
                     await self.streamer.agent_complete(
                         agent_id=agent_id,
                         stage_id=stage_id,
-                        success=True,
+                        success=not failure,
                         result_preview=result_preview,
                         full_result=result,  # Pass full result as well
+                        error=failure or None,
+                        error_event=False,  # 돌려준 실패 — 이벤트 종류는 유지
                     )
 
                 return agent_result
@@ -533,6 +546,32 @@ class ExecutionEngine:
         return agent_result
 
     @staticmethod
+    def _counts_for_outcome(result: AgentResult) -> bool:
+        """워크플로우 결말을 정할 때 결과로 치는가.
+
+        돌려준 실패(실행기가 실패 내용을 반환)는 기록상 실패지만 결말에서는 이전처럼
+        결과로 친다 — 이 엔진은 그동안 그것을 성공으로 기록해 왔고 logos_api 의 재시도·
+        표시가 그 결말에 맞춰져 있다. 예외로 난 실패는 원래대로 결과가 아니다.
+        """
+        return result.success or (result.metadata or {}).get("failure") == "returned"
+
+    @staticmethod
+    def _failure_of(result: Any) -> str:
+        """실행기 결과의 실패 사유. 성공이면 "".
+
+        판정은 정본(logosai.agent_outcome.failure_reason) 하나에 맡기고, 여기서는
+        무엇을 판정할지만 고른다. logos_api 실행기는 ACP 안의 실패(response_type
+        ERROR — 실측 file_agent "Access denied")를 `{"success": True, "data": {...}}`
+        로 감싸므로 바깥 봉투만 보면 못 잡는다 — data 도 본다.
+        """
+        from logosai.agent_outcome import failure_reason
+
+        reason = failure_reason(result)
+        if not reason and isinstance(result, dict) and isinstance(result.get("data"), dict):
+            reason = failure_reason(result["data"])
+        return reason
+
+    @staticmethod
     def _context_for_task(agent_task: AgentTask, context: Optional[Dict[str, Any]]):
         """계획이 태스크 ID 를 정했을 때만 실행기 문맥에 싣는다.
 
@@ -564,7 +603,7 @@ class ExecutionEngine:
         prior = {
             key.split(".", 1)[1]: ar.data
             for key, ar in getattr(self, "_agent_results", {}).items()
-            if ar.success and ar.data is not None
+            if self._counts_for_outcome(ar) and ar.data is not None
         }
         if prior:
             try:
@@ -779,7 +818,7 @@ class ExecutionEngine:
             all_data = []
             for stage in stage_results:
                 for result in stage.results:
-                    if result.success and result.data:
+                    if self._counts_for_outcome(result) and result.data:
                         all_data.append({
                             "agent_id": result.agent_id,
                             "stage_id": result.stage_id,
