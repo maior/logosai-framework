@@ -8,8 +8,8 @@ AgentRegistry 에는 그 메서드가 없다(`get_all_agents()`). 예외가 fail
 그래서 여기 배선 테스트는 **실제 AgentRegistry** 로 한다.
 
 모드 (LOGOSAI_ARTIFACT_GATE, 값 기반):
-  off (기본)     — 돌리지 않는다. 플래너 LLM 호출이 루프를 막는 동안의 임시 기본값.
-  observe        — 판정을 백그라운드로 돌려 기록만 한다. 계획을 막지 않는다.
+  observe (기본) — 판정을 백그라운드로 돌려 기록만 한다. 계획을 막지 않는다.
+  off            — 돌리지 않는다.
   enforce        — 판정이 누락이면 검증 오류로 올린다(상위 재계획 루프를 탄다).
 측정되지 않은 LLM 판정기를 바로 켜지 않는다 — 판정을 쌓아 정밀도를 잰 뒤 정한다.
 """
@@ -188,15 +188,15 @@ async def test_compat_wrapper_still_returns_error_list():
     assert await check_artifact_capability("x", {"internet_agent"}, info, FakeJudge(NO_ARTIFACT)) == []
 
 
-async def test_unset_mode_is_off_until_the_planner_stops_blocking(monkeypatch, recorded):
-    """기본값은 off — 판정기로 주입되는 플래너 LLM 호출이 이벤트 루프를 막는 동안은
-    관찰도 응답을 늦춘다 (실측: 루프 0.92s 정지, 사용자 이벤트 0.9s 지연).
-    플래너가 비차단이 되면 기본값을 observe 로 올린다."""
+async def test_unset_mode_is_observe(monkeypatch, recorded):
+    """기본값은 observe — 판정기로 주입되는 플래너 LLM 호출이 비차단이 됐다
+    (asyncio.to_thread, 2026-10-04). 그 전엔 루프를 0.92s 막아 off 였다."""
     monkeypatch.delenv("LOGOSAI_ARTIFACT_GATE", raising=False)
     judge = FakeJudge(MISSING)
     validator = PlanValidator(registry=_registry(), llm_invoke=judge)
 
-    await validator.validate(_plan())
+    result = await validator.validate(_plan())
     await validator.wait_observations()
 
-    assert judge.prompts == [] and recorded == []
+    assert result.is_valid is True and len(judge.prompts) == 1
+    assert recorded and recorded[0]["mode"] == "observe"

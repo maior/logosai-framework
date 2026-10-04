@@ -154,13 +154,13 @@ _GATE_OFF = ("off", "false", "0", "no", "disable", "disabled")
 
 
 def _gate_mode() -> str:
-    """off(기본) · observe · enforce. 모르는 값은 관찰로 — 오타가 집행을 켜거나
+    """observe(기본) · enforce · off. 모르는 값은 관찰로 — 오타가 집행을 켜거나
     관문을 조용히 끄지 않게 한다.
 
-    기본이 off 인 이유: 판정기로 주입되는 플래너 LLM 호출이 이벤트 루프를 막는 동안은
-    관찰도 응답을 늦춘다 (실측 0.92s). 플래너가 비차단이 되면 observe 로 올린다.
+    기본이 한때 off 였다: 판정기로 주입되는 플래너 LLM 호출이 이벤트 루프를 막아 관찰도
+    응답을 늦췄다(실측 0.92s). 플래너를 비차단(asyncio.to_thread)으로 고친 뒤 observe.
     """
-    raw = os.environ.get(_GATE_ENV, "off").strip().lower()
+    raw = os.environ.get(_GATE_ENV, "observe").strip().lower()
     if raw in _GATE_OFF:
         return "off"
     if raw in ("observe", "enforce"):
@@ -322,8 +322,8 @@ class PlanValidator:
     async def _validate_artifact(self, plan: ExecutionPlan) -> List[str]:
         """산출물 관문 배선. llm_invoke 가 주입되지 않으면 침묵한다.
 
-        off(기본)     — 돌리지 않는다.
-        observe       — 판정을 백그라운드로 돌려 기록만 하고 막지 않는다.
+        observe(기본) — 판정을 백그라운드로 돌려 기록만 하고 막지 않는다.
+        off           — 돌리지 않는다.
         enforce       — 누락이면 오류로 올려 상위 재계획 루프를 태운다.
 
         2026-08-18 도입 이후 이 함수는 레지스트리의 없는 메서드(list_agents)를 불러

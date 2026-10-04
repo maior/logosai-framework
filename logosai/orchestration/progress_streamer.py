@@ -824,13 +824,21 @@ class ProgressStreamer:
 
     # ========== Streaming generators ==========
 
-    async def events(self) -> AsyncGenerator[ProgressEvent, None]:
+    async def events(
+        self, keep_alive: Optional[Callable[[], bool]] = None
+    ) -> AsyncGenerator[ProgressEvent, None]:
         """
         Async generator for streaming events.
 
         Usage:
             async for event in streamer.events():
                 process_event(event)
+
+        keep_alive: 0.5s 동안 이벤트가 없을 때 계속 기다릴지 묻는다. 주면 플래그 대신
+            이것으로 판단한다 — 참이면 기다리고, 거짓이면(생산자가 끝났으면) 끝낸다.
+            주지 않으면 기존 규칙(workflow_start 전이면 끝냄)이다. 그 규칙은 계획
+            수립이 0.5s 를 넘기면 스트림을 끊는다 — 계획 LLM 호출이 이벤트 루프를
+            막는 동안엔 시간 제한이 발동하지 못해 가려져 있었다 (2026-10-04).
         """
         while not self._is_closed:
             try:
@@ -840,6 +848,10 @@ class ProgressStreamer:
                 )
                 yield event
             except asyncio.TimeoutError:
+                if keep_alive is not None:
+                    if keep_alive():
+                        continue
+                    break
                 # Check if we should stop
                 if not self._is_streaming:
                     break
