@@ -275,13 +275,16 @@ Root Span (agent.process)
 ```
 
 ```python
-from logosai.utils.pulse_client import PulseClient
+from logosai.utils import pulse_client as pulse
 
-# Fire-and-forget — zero overhead (~0.01ms/span)
-pulse = PulseClient(endpoint="http://localhost:8095")
-await pulse.record_execution(agent_id, query, result, duration_ms)
-await pulse.record_llm_call(model, tokens_in, tokens_out, latency_ms)
-await pulse.record_span(trace_id, parent_id, name, metadata)
+# Endpoint: LOGOS_PULSE_URL (default http://localhost:8095)
+# Spans from TraceSpan are sent automatically — call these for your own records.
+# Failed execution/LLM-call sends are spooled to ~/.logosai/pulse_spool.jsonl
+# and retried later (spans are not — they are not idempotent yet).
+await pulse.send_execution(agent_id="my_agent", query=query, success=True, duration_ms=120)
+await pulse.send_llm_call(agent_id="my_agent", model="gemini-2.5-flash-lite",
+                          input_tokens=812, output_tokens=164, duration_ms=1800)
+await pulse.send_span(trace_id=trace_id, parent_id=parent_id, name="tool.search", duration_ms=40)
 ```
 
 **Dashboard** (port 8096): Execution history · LLM cost tracking · Span tree visualization · User feedback (👍/👎) · Adaptive learning loop
