@@ -451,7 +451,8 @@ class ExecutionEngine:
 
                 # Execute with timeout
                 result = await asyncio.wait_for(
-                    self._call_agent(agent_id, sub_query, input_data, context),
+                    self._call_agent(agent_id, sub_query, input_data,
+                                     self._context_for_task(agent_task, context)),
                     timeout=timeout_ms / 1000,
                 )
 
@@ -530,6 +531,18 @@ class ExecutionEngine:
             )
 
         return agent_result
+
+    @staticmethod
+    def _context_for_task(agent_task: AgentTask, context: Optional[Dict[str, Any]]):
+        """계획이 태스크 ID 를 정했을 때만 실행기 문맥에 싣는다.
+
+        실행기는 어느 태스크를 돌리는지 알아야 할 때가 있다 — 같은 에이전트가 한
+        stage 에 두 번 나오면 agent_id 로는 구별되지 않는다 (logosai.workflow 래퍼).
+        운영 플래너는 task_id 를 정하지 않으므로 그 경로의 문맥은 그대로다.
+        """
+        if not agent_task.task_id:
+            return context
+        return {**(context or {}), "task_id": agent_task.task_id}
 
     async def _call_agent(
         self,

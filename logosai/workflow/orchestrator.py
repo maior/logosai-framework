@@ -6,6 +6,7 @@ LogosAI 워크플로우 오케스트레이터 (Workflow Orchestrator)
 """
 
 import asyncio
+import json
 import time
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 from loguru import logger
@@ -80,13 +81,8 @@ class WorkflowOrchestrator:
         )
 
         try:
-            # 실행 전략에 따라 처리
-            if plan.execution_strategy == ExecutionStrategy.SEQUENTIAL:
-                await self._execute_sequential(plan, initial_context)
-            elif plan.execution_strategy == ExecutionStrategy.PARALLEL:
-                await self._execute_parallel(plan, initial_context)
-            else:  # HYBRID
-                await self._execute_hybrid(plan, initial_context)
+            # 실행은 logosai.orchestration 엔진에 맡긴다 (레벨 = stage)
+            await self._run_on_engine(plan, initial_context)
 
             # 결과 집계
             result = self._aggregate_results(plan, start_time)
@@ -112,115 +108,172 @@ class WorkflowOrchestrator:
                 error_summary=str(e)
             )
 
-    async def _execute_sequential(
+    async def _run_on_engine(
         self,
         plan: WorkflowPlan,
         initial_context: Optional[Dict[str, Any]]
     ):
-        """순차 실행"""
-        context = initial_context or {}
+        """레벨 하나를 stage 하나로 바꿔 logosai.orchestration 엔진으로 실행한다.
 
-        for level in plan.execution_order:
-            for task_id in level:
-                task = plan.get_task_by_id(task_id)
-                if not task:
-                    continue
+        왜: 이 클래스는 자기 실행 루프를 갖고 있었고, 의존 태스크의 agent_query 가
+        None 이면(LLM 분해기가 "앞 결과를 쓰라"는 뜻으로 null 을 낸다) 그대로
+        실행기에 넘겨 순차 2단계가 실패했다. 운영 엔진은 앞 결과를 다음 쿼리에
+        싣는다 — 실행부를 그 하나로 모은다 (2026-10-04, orchestrator-unify).
 
-                # 의존성 결과 주입
-                task_context = self._build_task_context(task, context)
-
-                # 태스크 실행
-                result = await self._execute_task(task, task_context)
-                self._task_results[task_id] = result
-
-                # 결과를 컨텍스트에 추가
-                if result.success:
-                    context[task_id] = result.result
-
-    async def _execute_parallel(
-        self,
-        plan: WorkflowPlan,
-        initial_context: Optional[Dict[str, Any]]
-    ):
-        """병렬 실행 (모든 태스크)"""
-        context = initial_context or {}
-
-        tasks_to_execute = [
-            self._execute_task(task, self._build_task_context(task, context))
-            for task in plan.tasks
-        ]
-
-        # 동시 실행 제한 적용
-        semaphore = asyncio.Semaphore(self.max_concurrent)
-
-        async def limited_execute(coro, task_id):
-            async with semaphore:
-                return task_id, await coro
-
-        results = await asyncio.gather(
-            *[
-                limited_execute(coro, plan.tasks[i].task_id)
-                for i, coro in enumerate(tasks_to_execute)
-            ],
-            return_exceptions=True
+        acp_server 계약은 그대로다: 실행기는 dependency_results 를 받고, 결과는
+        _to_execution_result 의 기존 판정 규칙으로 ExecutionResult 가 된다.
+        """
+        from logosai.orchestration import (
+            AgentTask, ExecutionEngine, ExecutionPlan, ExecutionStage,
         )
 
-        # 결과 저장
-        for item in results:
-            if isinstance(item, Exception):
-                logger.error(f"병렬 실행 중 예외: {item}")
-                continue
-            task_id, result = item
-            self._task_results[task_id] = result
+        tasks = {t.task_id: t for t in plan.tasks}
+        levels = plan.execution_order or self._fallback_levels(plan)
+        base = dict(initial_context or {})
 
-    async def _execute_hybrid(
-        self,
-        plan: WorkflowPlan,
-        initial_context: Optional[Dict[str, Any]]
-    ):
-        """하이브리드 실행 (레벨 단위 병렬)"""
-        context = initial_context or {}
+        stages = []
+        for level in levels:
+            agents = [
+                AgentTask(
+                    agent_id=tasks[tid].agent_id,
+                    sub_query=(self._as_query_text(tasks[tid].agent_query)
+                               or tasks[tid].description or plan.original_query),
+                    task_id=tid,
+                    timeout_ms=int((tasks[tid].timeout or self.default_timeout) * 1000),
+                    max_retries=tasks[tid].max_retries,
+                )
+                for tid in level if tid in tasks
+            ]
+            if agents:
+                stages.append(ExecutionStage(
+                    stage_id=len(stages) + 1,
+                    execution_type="parallel" if len(agents) > 1 else "sequential",
+                    agents=agents,
+                ))
 
-        for level in plan.execution_order:
-            if len(level) == 1:
-                # 단일 태스크 - 순차 실행
-                task_id = level[0]
-                task = plan.get_task_by_id(task_id)
-                if task:
-                    task_context = self._build_task_context(task, context)
-                    result = await self._execute_task(task, task_context)
-                    self._task_results[task_id] = result
-                    if result.success:
-                        context[task_id] = result.result
-            else:
-                # 다중 태스크 - 병렬 실행
-                semaphore = asyncio.Semaphore(self.max_concurrent)
+        async def executor(agent_id: str, query: str, context: Dict[str, Any]):
+            task = tasks.get((context or {}).get("task_id"))
+            merged = {**base, **(context or {})}
+            if task is None:  # 방어 — 엔진이 task_id 를 잃으면 의존 결과 없이 실행
+                return await self.agent_executor(agent_id, query, merged)
+            task.status = TaskStatus.RUNNING
+            started = time.time()
+            result = await self.agent_executor(
+                agent_id, query, self._build_task_context(task, merged))
+            self._task_results[task.task_id] = self._to_execution_result(
+                task, result, time.time() - started)
+            return result
 
-                async def execute_with_semaphore(t: TaskInfo):
-                    async with semaphore:
-                        tc = self._build_task_context(t, context)
-                        return t.task_id, await self._execute_task(t, tc)
+        strategy = plan.execution_strategy.value
+        engine_result = await ExecutionEngine(agent_executor=executor).execute(
+            ExecutionPlan(
+                query=plan.original_query,
+                workflow_strategy=strategy if strategy in ("sequential", "parallel", "hybrid") else "hybrid",
+                stages=stages,
+                plan_id=plan.plan_id,
+            ),
+            base,
+        )
 
-                tasks = [
-                    plan.get_task_by_id(tid)
-                    for tid in level
-                ]
-                tasks = [t for t in tasks if t is not None]
-
-                results = await asyncio.gather(
-                    *[execute_with_semaphore(t) for t in tasks],
-                    return_exceptions=True
+        # 실행기가 결과를 내지 못한 태스크(예외·시간 초과)는 엔진의 기록으로 채운다.
+        # stage 의 결과 순서는 그 stage 의 에이전트 순서와 같다.
+        by_stage = {st.stage_id: st for st in engine_result.stages}
+        for stage in stages:
+            ran = by_stage.get(stage.stage_id)
+            for agent_task, agent_result in zip(stage.agents, ran.results if ran else []):
+                if agent_task.task_id in self._task_results:
+                    continue
+                task = tasks[agent_task.task_id]
+                task.status = TaskStatus.FAILED
+                task.error = agent_result.error or "결과 없음"
+                self._task_results[task.task_id] = ExecutionResult(
+                    task_id=task.task_id,
+                    agent_id=task.agent_id,
+                    success=False,
+                    result=None,
+                    result_type="error",
+                    execution_time=(agent_result.execution_time_ms or 0) / 1000,
+                    error=task.error,
                 )
 
-                # 결과 저장 및 컨텍스트 업데이트
-                for item in results:
-                    if isinstance(item, Exception):
-                        logger.error(f"하이브리드 실행 중 예외: {item}")
-                        continue
-                    task_id, result = item
-                    self._task_results[task_id] = result
-                    if result.success:
-                        context[task_id] = result.result
+        # 집계 순서는 완료 순서가 아니라 계획 순서
+        ordered = [tid for level in levels for tid in level if tid in self._task_results]
+        self._task_results = {tid: self._task_results[tid] for tid in ordered}
+
+    @staticmethod
+    def _as_query_text(value: Any) -> str:
+        """LLM 분해기의 agent_query 를 실행기가 받을 문자열로.
+
+        문자열로 시켜도 객체가 온다 — 실측 `{'text': 'hello world'}`,
+        `{'text_upper': 'hello world'}` (능력 이름을 키로 쓴다). 그대로 넘기면
+        실행기가 `query.split` 에서 죽는다. 값이 문자열 하나뿐인 dict 는 그 값,
+        그 외 객체는 JSON — 정보를 버리지 않는다. 빈 값은 "" (호출자가 대체).
+        """
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict) and len(value) == 1:
+            (only,) = value.values()
+            if isinstance(only, str):
+                return only
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _fallback_levels(plan: WorkflowPlan) -> List[List[str]]:
+        """execution_order 가 비었을 때 — 순차는 한 줄씩, 그 외는 한 묶음."""
+        ids = [t.task_id for t in plan.tasks]
+        if plan.execution_strategy == ExecutionStrategy.SEQUENTIAL:
+            return [[tid] for tid in ids]
+        return [ids] if ids else []
+
+    def _to_execution_result(
+        self,
+        task: TaskInfo,
+        result: Any,
+        execution_time: float
+    ) -> ExecutionResult:
+        """실행기 응답 → ExecutionResult. 판정 규칙은 기존 그대로다 (acp_server 계약)."""
+        if hasattr(result, 'type') and hasattr(result, 'content'):
+            # AgentResponse 객체
+            success = self._is_success_response(result)
+            content = result.content
+            result_type = result.type.value if hasattr(result.type, 'value') else str(result.type)
+            metadata = result.metadata if hasattr(result, 'metadata') else {}
+        elif isinstance(result, dict):
+            # 딕셔너리 응답
+            success = result.get('success', True)
+            content = result.get('content', result.get('result', result))
+            result_type = result.get('type', 'success')
+            metadata = result.get('metadata', {})
+        else:
+            # 기타 응답
+            success = True
+            content = result
+            result_type = 'success'
+            metadata = {}
+
+        task.status = TaskStatus.COMPLETED if success else TaskStatus.FAILED
+        task.result = content
+        task.execution_time = execution_time
+
+        logger.info(
+            f"태스크 실행 완료: task_id={task.task_id}, "
+            f"success={success}, time={execution_time:.2f}s"
+        )
+
+        return ExecutionResult(
+            task_id=task.task_id,
+            agent_id=task.agent_id,
+            success=success,
+            result=content,
+            result_type=result_type,
+            execution_time=execution_time,
+            metadata=metadata
+        )
 
     async def _execute_task(
         self,
@@ -257,44 +310,7 @@ class WorkflowOrchestrator:
 
             execution_time = time.time() - start_time
 
-            # AgentResponse 처리
-            if hasattr(result, 'type') and hasattr(result, 'content'):
-                # AgentResponse 객체
-                success = self._is_success_response(result)
-                content = result.content
-                result_type = result.type.value if hasattr(result.type, 'value') else str(result.type)
-                metadata = result.metadata if hasattr(result, 'metadata') else {}
-            elif isinstance(result, dict):
-                # 딕셔너리 응답
-                success = result.get('success', True)
-                content = result.get('content', result.get('result', result))
-                result_type = result.get('type', 'success')
-                metadata = result.get('metadata', {})
-            else:
-                # 기타 응답
-                success = True
-                content = result
-                result_type = 'success'
-                metadata = {}
-
-            task.status = TaskStatus.COMPLETED if success else TaskStatus.FAILED
-            task.result = content
-            task.execution_time = execution_time
-
-            logger.info(
-                f"태스크 실행 완료: task_id={task.task_id}, "
-                f"success={success}, time={execution_time:.2f}s"
-            )
-
-            return ExecutionResult(
-                task_id=task.task_id,
-                agent_id=task.agent_id,
-                success=success,
-                result=content,
-                result_type=result_type,
-                execution_time=execution_time,
-                metadata=metadata
-            )
+            return self._to_execution_result(task, result, execution_time)
 
         except asyncio.TimeoutError:
             execution_time = time.time() - start_time
