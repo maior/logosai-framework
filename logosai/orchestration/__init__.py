@@ -43,6 +43,7 @@ from .data_transformer import DataTransformer
 from .execution_engine import ExecutionEngine
 from .result_aggregator import ResultAggregator
 from .planner import QueryPlanner
+from .workflow_orchestrator import WorkflowOrchestrator
 
 __all__ = [
     "AgentSchema", "AgentRegistryEntry", "AgentTask", "ExecutionStage", "ExecutionPlan",
@@ -51,5 +52,5 @@ __all__ = [
     "OrchestratorError", "PlanValidationError", "ExecutionError", "TransformationError",
     "AgentNotFoundError", "CircularDependencyError", "SchemaCompatibilityError",
     "AgentRegistry", "get_registry", "ProgressStreamer", "PlanValidator",
-    "DataTransformer", "ExecutionEngine", "ResultAggregator", "QueryPlanner",
+    "DataTransformer", "ExecutionEngine", "ResultAggregator", "QueryPlanner", "WorkflowOrchestrator",
 ]
