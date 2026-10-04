@@ -46,7 +46,14 @@ async def test_simple_query_yields_zero_tasks_so_host_falls_back():
         calls.append(agent_id)
         return {"success": True, "result": {"answer": "x"}}
 
-    engine = WorkflowEngine(agent_executor=executor)
+    async def llm(prompt):          # 플래너가 에이전트 하나로 충분하다고 판단 (결정적)
+        if "두 가지만 판정하라" in prompt:
+            return '{"unnecessary_agents": [], "broken_chain": false, "reason": "ok"}'
+        return ('{"workflow_strategy": "sequential", "stages": [{"stage_id": 1, '
+                '"execution_type": "sequential", "agents": [{"agent_id": "count_agent", '
+                '"sub_query": "1+1", "input_from": null}]}]}')
+
+    engine = WorkflowEngine(agent_executor=executor, llm=llm)
     result = await engine.process("1+1", AGENTS, context={"raw_query": "1+1"})
 
     assert result.total_tasks == 0, "단순 쿼리가 워크플로우로 잡히면 acp_server 단일 경로가 막힌다"

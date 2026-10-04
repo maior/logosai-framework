@@ -509,10 +509,19 @@ class WorkflowOrchestrator:
 
 class WorkflowEngine:
     """
-    통합 워크플로우 엔진
+    통합 워크플로우 엔진 — 복합 쿼리를 계획하고 실행한다.
 
-    QueryDecomposer, WorkflowPlanner, WorkflowOrchestrator를 통합하여
-    단일 인터페이스로 복합 쿼리 처리를 제공합니다.
+    계획은 logosai.orchestration.planner 의 플래너(LLM)가 하고, 실행은 이 모듈의
+    WorkflowOrchestrator(→ logosai.orchestration 실행 엔진)가 한다.
+
+    이전에는 QueryDecomposer 가 길이·키워드로 단순 쿼리를 먼저 거르고 자기 프롬프트로
+    분해했다 — SDK 안에 계획기가 두 벌이었고, 거르기는 하드코딩 라우팅이었다.
+    2026-10-05 (orchestrator-unify P4) 부터 판단은 플래너 하나가 한다.
+    QueryDecomposer·WorkflowPlanner 모듈은 공개 API 라 남아 있다.
+
+    호스트 계약 (acp_server): 플래너가 에이전트 1개 이하로 계획하거나, 할 수 없다(gap)고
+    하거나, 계획에 실패하면 total_tasks == 0 인 결과를 돌려준다 — 실행은 0건이고,
+    호스트는 자기 단일 에이전트 경로로 간다.
     """
 
     def __init__(
@@ -524,17 +533,27 @@ class WorkflowEngine:
         초기화
 
         Args:
-            agent_executor: 에이전트 실행 함수
-            llm: LLM 인스턴스 (QueryDecomposer용)
+            agent_executor: 에이전트 실행 함수 (agent_id, query, context)
+            llm: 플래너가 쓸 LLM. async prompt -> str 함수, 또는 async invoke(prompt)
+                 를 가진 객체(LLMClient 모양). 없으면 플래너가 LLMClient 를 쓴다.
         """
-        from .query_decomposer import QueryDecomposer
-        from .workflow_planner import WorkflowPlanner
-
-        self.decomposer = QueryDecomposer(llm=llm)
-        self.planner = WorkflowPlanner()
         self.orchestrator = WorkflowOrchestrator(agent_executor=agent_executor)
-
+        self._llm_invoke = self._as_llm_invoke(llm)
         self._initialized = False
+
+    @staticmethod
+    def _as_llm_invoke(llm):
+        if llm is None:
+            return None
+        if asyncio.iscoroutinefunction(llm):
+            return llm
+        if hasattr(llm, "invoke"):
+            async def invoke(prompt: str) -> str:
+                response = await llm.invoke(prompt)
+                return getattr(response, "content", str(response))
+            return invoke
+        raise TypeError(
+            "llm 은 async prompt -> str 함수이거나 async invoke(prompt) 를 가진 객체여야 한다")
 
     def set_agent_executor(
         self,
@@ -544,11 +563,7 @@ class WorkflowEngine:
         self.orchestrator.set_agent_executor(executor)
 
     async def initialize(self):
-        """엔진 초기화"""
-        if self._initialized:
-            return
-
-        await self.decomposer.initialize()
+        """엔진 초기화 (호환 — 플래너는 요청마다 만든다)"""
         self._initialized = True
         logger.info("WorkflowEngine 초기화 완료")
 
@@ -559,55 +574,39 @@ class WorkflowEngine:
         context: Optional[Dict[str, Any]] = None
     ) -> WorkflowResult:
         """
-        쿼리 처리
-
-        1. 쿼리 분해
-        2. 워크플로우 계획 생성
-        3. 워크플로우 실행
+        쿼리 처리 — 계획 → (복합이면) 실행.
 
         Args:
             query: 사용자 쿼리
-            available_agents: 사용 가능한 에이전트 목록
+            available_agents: 사용 가능한 에이전트 목록 (agent_id, name, description, capabilities)
             context: 초기 컨텍스트
 
         Returns:
-            WorkflowResult: 처리 결과
+            WorkflowResult. 단순·gap·계획 실패면 total_tasks == 0 (호스트 단일 경로로).
         """
         if not self._initialized:
             await self.initialize()
 
         logger.info(f"WorkflowEngine 처리 시작: {query[:100]}...")
+        started = time.time()
+        plan, reason = await self._plan(query, available_agents, context)
 
-        # 1. 쿼리 분해
-        decomposition = await self.decomposer.decompose(query, available_agents)
-
-        # 2. 단순 쿼리인 경우 빈 결과 반환 (기존 로직 사용하도록)
-        if not decomposition.is_complex:
-            logger.info("단순 쿼리 - 기존 에이전트 선택 로직 사용")
+        if plan is None:
+            logger.info(f"단순 처리 — 호스트 에이전트 선택 경로 사용 ({reason})")
             return WorkflowResult(
                 plan_id="",
                 original_query=query,
                 success=True,
                 task_results=[],
                 final_result=None,
-                total_execution_time=decomposition.analysis_time,
+                total_execution_time=time.time() - started,
                 strategy_used=ExecutionStrategy.SEQUENTIAL,
                 completed_tasks=0,
                 failed_tasks=0,
                 skipped_tasks=0
             )
 
-        # 3. 워크플로우 계획 생성
-        plan = self.planner.create_plan(decomposition)
-
-        # 4. 계획 검증
-        if not self.planner.validate_plan(plan):
-            logger.warning("워크플로우 계획 검증 실패")
-
-        # 5. 워크플로우 실행
-        result = await self.orchestrator.execute(plan, context)
-
-        return result
+        return await self.orchestrator.execute(plan, context)
 
     async def analyze_query(
         self,
@@ -617,26 +616,83 @@ class WorkflowEngine:
         """
         쿼리 분석만 수행 (실행 없이)
 
-        Args:
-            query: 분석할 쿼리
-            available_agents: 사용 가능한 에이전트 목록
-
         Returns:
-            분석 결과 딕셔너리
+            {"decomposition": 판단 요약, "plan": WorkflowPlan dict 또는 None(단순)}
         """
-        if not self._initialized:
-            await self.initialize()
+        plan, reason = await self._plan(query, available_agents, None)
+        return {
+            "decomposition": {
+                "original_query": query,
+                "is_complex": plan is not None,
+                "task_count": plan.task_count if plan else 0,
+                "reasoning": reason,
+            },
+            "plan": plan.to_dict() if plan else None,
+        }
 
-        decomposition = await self.decomposer.decompose(query, available_agents)
+    async def _plan(self, query, available_agents, context):
+        """플래너로 계획 → 구 WorkflowPlan. 단순·gap·실패면 (None, 이유)."""
+        from logosai.orchestration import AgentRegistry, AgentRegistryEntry, AgentSchema
+        from logosai.orchestration.planner import QueryPlanner
 
-        if decomposition.is_complex:
-            plan = self.planner.create_plan(decomposition)
-            return {
-                "decomposition": decomposition.to_dict(),
-                "plan": plan.to_dict()
-            }
+        # 요청마다 자기 레지스트리 — 전역 레지스트리를 건드리지 않는다
+        registry = AgentRegistry()
+        for info in available_agents or []:
+            agent_id = info.get("agent_id")
+            if not agent_id:
+                continue
+            registry.register_agent(AgentRegistryEntry(
+                agent_id=agent_id,
+                name=info.get("name") or agent_id,
+                description=info.get("description") or "",
+                capabilities=list(info.get("capabilities") or []),
+                tags=list(info.get("tags") or []),
+                schema=AgentSchema(input_type="query", output_type="text"),
+            ))
+
+        try:
+            planner = QueryPlanner(registry=registry, llm_invoke=self._llm_invoke)
+            execution_plan = await planner.create_plan(query, context)
+        except Exception as e:  # 구 분해기와 같은 원칙 — 계획 실패는 호스트 단일 경로로
+            logger.warning(f"워크플로우 계획 실패 — 단순 처리로 폴백: {e}")
+            return None, f"계획 실패: {e}"
+
+        gap = execution_plan.capability_gap
+        if isinstance(gap, dict) and gap.get("detected"):
+            return None, "플래너가 등록 에이전트로 처리할 수 없다고 판단 (gap)"
+        if execution_plan.get_total_agents() <= 1:
+            return None, "플래너가 에이전트 하나로 충분하다고 판단"
+        return self._to_workflow_plan(execution_plan), execution_plan.reasoning or ""
+
+    @staticmethod
+    def _to_workflow_plan(execution_plan) -> WorkflowPlan:
+        """stage 계획 → 구 WorkflowPlan. stage 하나 = 실행 레벨 하나, 다음 레벨은 앞 레벨 전체에 의존."""
+        tasks: List[TaskInfo] = []
+        levels: List[List[str]] = []
+        previous: List[str] = []
+        for stage in execution_plan.stages:
+            level = []
+            for agent_task in stage.agents:
+                task = TaskInfo(
+                    description=agent_task.expected_output or agent_task.sub_query,
+                    agent_id=agent_task.agent_id,
+                    agent_query=agent_task.sub_query,
+                    depends_on=list(previous),
+                )
+                tasks.append(task)
+                level.append(task.task_id)
+            if level:
+                levels.append(level)
+                previous = level
+        if len(levels) <= 1:
+            strategy = ExecutionStrategy.PARALLEL
+        elif all(len(level) == 1 for level in levels):
+            strategy = ExecutionStrategy.SEQUENTIAL
         else:
-            return {
-                "decomposition": decomposition.to_dict(),
-                "plan": None
-            }
+            strategy = ExecutionStrategy.HYBRID
+        return WorkflowPlan(
+            original_query=execution_plan.query,
+            tasks=tasks,
+            execution_strategy=strategy,
+            execution_order=levels,
+        )

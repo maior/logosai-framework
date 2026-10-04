@@ -159,25 +159,36 @@ async def test_engine_passes_task_id_only_when_the_plan_sets_it():
 
 
 async def test_workflow_engine_process_runs_a_two_step_plan(monkeypatch):
-    """WorkflowEngine.process 전체 경로 — 분해기만 고정하고 나머지는 실제."""
+    """WorkflowEngine.process 전체 경로 — LLM 만 고정하고 나머지는 실제.
+
+    P4(2026-10-05)부터 계획은 플래너가 한다. 이전엔 분해기를 고정했다.
+    """
+    import json
+    monkeypatch.setenv("LOGOSAI_ARTIFACT_GATE", "off")
+    plan = json.dumps({"workflow_strategy": "sequential", "stages": [
+        {"stage_id": 1, "execution_type": "sequential",
+         "agents": [{"agent_id": "upper_agent", "sub_query": "hello world", "input_from": None}]},
+        {"stage_id": 2, "execution_type": "sequential",
+         "agents": [{"agent_id": "reverse_agent", "sub_query": "앞 결과를 뒤집기",
+                     "input_from": ["stage_1"]}]}]})
+
+    async def llm(prompt):
+        if "두 가지만 판정하라" in prompt:
+            return '{"unnecessary_agents": [], "broken_chain": false, "reason": "ok"}'
+        return plan
+
+    outputs = {"upper_agent": "HELLO WORLD", "reverse_agent": "DLROW OLLEH"}
     log = []
-    engine = WorkflowEngine(agent_executor=_recorder(
-        {"task_1": "HELLO WORLD", "task_2": "DLROW OLLEH"}, log))
 
-    async def fake_decompose(query, agents):
-        return DecompositionResult(
-            original_query=query, is_complex=True, complexity=QueryComplexity.MODERATE,
-            complexity_score=0.8, suggested_strategy=ExecutionStrategy.SEQUENTIAL, tasks=[
-                TaskInfo(task_id="task_1", agent_id="upper_agent", agent_query="hello world"),
-                TaskInfo(task_id="task_2", agent_id="reverse_agent", agent_query=None,
-                         depends_on=["task_1"]),
-            ])
+    async def executor(agent_id, query, context):
+        log.append({"agent": agent_id, "query": query,
+                    "deps": dict((context or {}).get("dependency_results") or {})})
+        return {"success": True, "result": outputs[agent_id]}
 
-    monkeypatch.setattr(engine.decomposer, "decompose", fake_decompose)
-    monkeypatch.setattr(engine.decomposer, "_initialized", True)
-
+    engine = WorkflowEngine(agent_executor=executor, llm=llm)
     result = await engine.process("hello world 를 대문자로 바꾼 다음, 그 결과를 뒤집어줘",
                                   [{"agent_id": "upper_agent"}, {"agent_id": "reverse_agent"}])
 
     assert result.total_tasks == 2 and result.completed_tasks == 2 and result.success is True
+    assert [x["agent"] for x in log] == ["upper_agent", "reverse_agent"]
     assert "HELLO WORLD" in log[1]["query"]
