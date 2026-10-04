@@ -13,6 +13,9 @@ LogosAI is a Python framework for building, orchestrating, and evolving AI agent
 pip install logosai
 ```
 
+> **Writing code with an LLM?** Give it the bundled guide: `python -m logosai.guide`
+> (source: [`logosai/llms.txt`](logosai/llms.txt)). Every example in it is executed by the test suite.
+
 ## Architecture
 
 <p align="center">
@@ -69,6 +72,9 @@ from logosai import agent, AgentResponse
 async def joke_agent(query, context=None, llm=None):
     response = await llm.invoke(f"Tell a short joke about: {query}")
     return AgentResponse.success(content={"answer": response.content})
+
+instance = joke_agent()                  # @agent returns a factory — create an instance
+result = await instance.process("cats")
 ```
 
 ### 3. Build an Agent (Class-Based)
@@ -147,7 +153,8 @@ pip install logosai[all]     # + All optional dependencies
 ### Multi-Agent Orchestration
 - **SimpleACPServer** — Host agents with JSON-RPC + SSE streaming
 - **Message Bus** — Pub/sub with topic routing and priorities
-- **Workflow Engine** — Sequential, parallel, hybrid with enriched data pipeline
+- **Workflow Orchestrator** — `logosai.orchestration.WorkflowOrchestrator`: query → plan → validate → run (sequential, parallel, hybrid), with streaming progress
+- **Workflow Engine** — `logosai.workflow.WorkflowEngine`: hand compound queries off from your own agent router (`total_tasks == 0` = handle it yourself)
 - **Dynamic Routing** — Tag-based auto-discovery, no hardcoded routes
 - **Data Flow** — Previous agent results automatically injected into next agent's query
 - **Document Search** — Semantic search across project docs (LLM-indexed, "where is this info?")
@@ -377,6 +384,7 @@ Key coverage: Tool Use · ReAct · Persistent Memory · Goal Decomposition · Sp
 
 | Guide | Description |
 |-------|-------------|
+| [LLM guide](logosai/llms.txt) | For code-generating LLMs — entry points, contracts, pitfalls; examples are tested (`python -m logosai.guide`) |
 | [ACP Protocol](docs/ACP_PROTOCOL.md) | Agent Communication Protocol — endpoints, call_agent(), Auto Reports |
 | [Building Agentic AI](docs/BUILDING_AGENTIC_AI.md) | LLM integration, collaboration, debate, evolution |
 | [Building an ACP Server](docs/BUILDING_ACP_SERVER.md) | Deploy multi-agent servers with JSON-RPC + SSE |

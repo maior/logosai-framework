@@ -19,9 +19,11 @@ from .models import (
 
 class WorkflowOrchestrator:
     """
-    워크플로우 실행 오케스트레이터
+    워크플로우 실행 오케스트레이터 — 이미 만든 WorkflowPlan 을 실행한다.
 
-    워크플로우 계획에 따라 에이전트를 실행하고 결과를 통합합니다.
+    쿼리를 받아 계획부터 하는 오케스트레이터는 logosai.orchestration.WorkflowOrchestrator
+    다 (이름이 같지만 다른 일). 새 코드는 그쪽을 쓴다. 이 클래스는 WorkflowEngine 이
+    내부적으로 쓰며, 실행은 logosai.orchestration 엔진에 맡긴다.
     """
 
     def __init__(

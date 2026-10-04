@@ -1,0 +1,247 @@
+# LogosAI SDK — guide for code-generating LLMs
+
+> Read this before writing code with `logosai`. Every Python block below is executed by the
+> package's test suite (`tests/test_llm_guide.py`), so the calls shown here exist and work.
+> Print this file from an installed package with: `python -m logosai.guide`
+
+## 1. Pick the right entry point
+
+| You want to… | Use | Section |
+|---|---|---|
+| Call an LLM once | `logosai.quick_llm` or `logosai.LLMClient` | 5 |
+| Write one agent | `@logosai.agent` (function) or `logosai.SimpleAgent` (class) | 2 |
+| Answer a user query with several agents (plan → validate → run) | `logosai.orchestration.WorkflowOrchestrator` | 3 |
+| Keep your own agent picker and only hand off compound queries | `logosai.workflow.WorkflowEngine` | 4 |
+| Host agents over HTTP (JSON-RPC + SSE) | `logosai.acp.SimpleACPServer` | README "Run a Multi-Agent Server" |
+
+Two classes share the name `WorkflowOrchestrator`. They do different jobs:
+- `logosai.orchestration.WorkflowOrchestrator` takes a **query** and returns a **result**. It plans,
+  validates, executes and streams progress. Use this one for new code.
+- `logosai.workflow.WorkflowOrchestrator` executes an **already-made** `WorkflowPlan`. `WorkflowEngine`
+  uses it internally; you rarely need it directly.
+
+## 2. Agents
+
+Every agent implements `process(self, query, context=None)` and returns an `AgentResponse`.
+With `SimpleAgent` you write `handle(...)` and the base class's `process` calls it.
+
+```python
+import asyncio
+from logosai import SimpleAgent, AgentResponse
+
+class TranslatorAgent(SimpleAgent):
+    agent_name = "Translator"
+    agent_description = "Translates text into English"
+
+    async def handle(self, query, context=None):
+        translation = await self.ask_llm(f"Translate to English: {query}")
+        return AgentResponse.success(content={"answer": translation})
+
+result = asyncio.run(TranslatorAgent().process("안녕하세요"))
+print(result.content["answer"])
+```
+
+`@agent` returns a **factory**, not an agent. Call it to get an instance, then call `process`:
+
+```python
+import asyncio
+from logosai import agent, AgentResponse
+
+@agent(name="Joke Agent", description="Tells jokes about any topic")
+async def joke_agent(query, context=None, llm=None):
+    response = await llm.invoke(f"Tell a short joke about: {query}")
+    return AgentResponse.success(content={"answer": response.content})
+
+instance = joke_agent()                      # not joke_agent.process(...)
+result = asyncio.run(instance.process("cats"))
+print(result.content["answer"])
+```
+
+To report a failure, return `AgentResponse.error(...)`. Don't return success with an error
+message inside: orchestration treats it as success and passes the text on to the next agent.
+
+## 3. Multi-agent workflow — `logosai.orchestration`
+
+The pieces:
+- **Registry.** Lists the agents the planner may choose. It starts **empty**; register every
+  agent, and write descriptions that say what the agent does and what it must not be used
+  for. The planner routes on the description.
+- **Executor.** `async (agent_id, query, context) -> result` runs one agent. Return the agent's
+  `AgentResponse` or a dict such as `{"success": True, "result": ...}`.
+- **LLM.** `llm_invoke` is `async (prompt) -> str`. If you omit it, the planner uses `LLMClient`
+  (provider and model come from `~/.logosai/config.json`).
+
+```python
+import asyncio
+from logosai import SimpleAgent, AgentResponse
+from logosai.orchestration import (
+    AgentRegistry, AgentRegistryEntry, AgentSchema, WorkflowOrchestrator,
+)
+
+class WeatherAgent(SimpleAgent):
+    agent_name = "Weather"
+    agent_description = "Current weather for one city"
+
+    async def handle(self, query, context=None):
+        return AgentResponse.success(content={"answer": f"{query}: 맑음, 21°C"})
+
+class SummaryAgent(SimpleAgent):
+    agent_name = "Summary"
+    agent_description = "Summarises the text it receives"
+
+    async def handle(self, query, context=None):
+        return AgentResponse.success(content={"answer": await self.ask_llm(f"요약: {query}")})
+
+agents = {"weather_agent": WeatherAgent(), "summary_agent": SummaryAgent()}
+
+registry = AgentRegistry()
+for agent_id, instance in agents.items():
+    registry.register_agent(AgentRegistryEntry(
+        agent_id=agent_id, name=instance.agent_name, description=instance.agent_description,
+        capabilities=[], tags=[], schema=AgentSchema(input_type="query", output_type="text"),
+    ))
+
+async def executor(agent_id, query, context):
+    return await agents[agent_id].process(query, context)
+
+async def main():
+    orchestrator = WorkflowOrchestrator(agent_executor=executor, registry=registry)
+    result = await orchestrator.run("서울 날씨를 알려주고 한 줄로 요약해줘")
+    print(result.success, result.successful_agents, result.failed_agents)
+    # The final answer is what the last agent of the last stage returned.
+    last = result.stages[-1].results[-1].data          # the AgentResponse your executor returned
+    print(last.content["answer"])
+
+asyncio.run(main())
+```
+
+Streaming progress, e.g. to forward to a browser over SSE:
+
+```python
+import asyncio
+from logosai import SimpleAgent, AgentResponse
+from logosai.orchestration import (
+    AgentRegistry, AgentRegistryEntry, AgentSchema, ProgressEventType, WorkflowOrchestrator,
+)
+
+class EchoAgent(SimpleAgent):
+    agent_name = "Echo"
+    agent_description = "Repeats the query"
+
+    async def handle(self, query, context=None):
+        return AgentResponse.success(content={"answer": query})
+
+registry = AgentRegistry()
+registry.register_agent(AgentRegistryEntry(
+    agent_id="echo_agent", name="Echo", description="Repeats the query",
+    capabilities=[], tags=[], schema=AgentSchema(input_type="query", output_type="text"),
+))
+
+async def executor(agent_id, query, context):
+    return await EchoAgent().process(query, context)
+
+async def main():
+    orchestrator = WorkflowOrchestrator(agent_executor=executor, registry=registry)
+    async for event in orchestrator.run_streaming("hello"):
+        print(event.type.value, event.message)    # event.to_sse() gives an SSE frame
+        if event.type == ProgressEventType.WORKFLOW_COMPLETE:
+            print(event.data)
+
+asyncio.run(main())
+```
+
+Reading the result: `result.final_output` changes shape with the plan. Depending on the
+aggregation the planner picked, it is a list of `{"agent_id", "stage_id", "data"}`, one agent's
+data, or the last stage's output. For the answer, read
+`result.stages[-1].results[-1].data`, which always has the same shape.
+
+What the orchestrator does:
+- **Plan shape.** A plan is a list of stages. Agents inside a stage run in parallel; the stages run
+  one after another. `create_plan_only(query)` returns the plan without running it.
+- **Data flow.** Each stage's results are added to the next stage's query automatically.
+- **Validation.** Before running, the plan is checked: unregistered agents and broken input
+  chains raise `PlanValidationError`.
+- **Missing capability.** If the registered agents can't do the job, the plan comes back with
+  `capability_gap["detected"] == True` and no stages.
+- **Agent failure.** A failing agent, whether it raised or returned `AgentResponse.error`, is
+  recorded in `result.failed_agents`. The next stages still run, and `result.success` can
+  still be `True`, so check `failed_agents` as well as `success`. A failure the agent
+  *returned* is passed on to the next stage as text, so that agent knows the data is missing
+  and doesn't invent it. A failure that *raised* is not passed on.
+- **Executors may return `AgentResponse` or a dict.** The next stage gets the same handoff
+  either way: the `answer` / `result` / `content` text, or the error message if there is no
+  content.
+- **Artifact check.** Set `LOGOSAI_ARTIFACT_GATE` to choose how the orchestrator checks that a
+  requested file (e.g. "make an Excel file") will really be produced: `observe` (default, log
+  only), `enforce` (reject the plan), `off`.
+
+## 4. Hand-off from your own router — `logosai.workflow.WorkflowEngine`
+
+Use this when your host already picks a single agent per query and you only want compound
+queries split into several steps. **Contract:** `total_tasks == 0` means "handle it yourself".
+You get this when the planner chose one agent or none, couldn't do it, or failed. In that
+case nothing was executed.
+
+```python
+import asyncio
+from logosai.workflow import WorkflowEngine
+
+AVAILABLE = [
+    {"agent_id": "search_agent", "name": "Search", "description": "Searches the web"},
+    {"agent_id": "excel_agent", "name": "Excel", "description": "Turns tables into .xlsx files"},
+]
+
+async def executor(agent_id, query, context):
+    previous = context.get("dependency_results")    # results of the earlier steps
+    return {"success": True, "result": f"{agent_id} done (had previous: {bool(previous)})"}
+
+async def main():
+    engine = WorkflowEngine(agent_executor=executor)
+    result = await engine.process("최신 AI 뉴스를 검색해서 엑셀로 만들어줘", AVAILABLE)
+    if result.total_tasks == 0:
+        print("single-agent query: route it yourself")
+    else:
+        print(result.success, [r.agent_id for r in result.task_results], result.final_result)
+
+asyncio.run(main())
+```
+
+The planner, an LLM, decides whether a query is compound; there are no keyword rules. Each
+`process` call therefore costs one LLM call, even for simple queries.
+
+## 5. LLM calls
+
+```python
+import asyncio
+from logosai import LLMClient
+
+async def main():
+    client = LLMClient()                     # provider/model from ~/.logosai/config.json
+    response = await client.invoke("Explain async/await in one sentence", max_tokens=200)
+    print(response.content)
+    if response.metadata.get("truncated"):   # True / False / None (provider gave no reason)
+        print("cut off at the output limit - raise max_tokens")
+
+asyncio.run(main())
+```
+
+- The default output limit is 2000 tokens. Pass `max_tokens=` per call when you expect long
+  output, such as JSON or reports.
+- A response cut off at the limit sets `metadata["truncated"] = True` and logs a warning. Check
+  it before parsing structured output.
+- `invoke_messages` and `invoke_with_tools` mark truncation the same way.
+
+## 6. Pitfalls
+
+- **Don't hard-code routing** (`if "날씨" in query: ...`). Register agents with accurate
+  descriptions and let the planner choose.
+- **Registries start empty.** `AgentRegistry()` contains nothing until you register agents.
+  Pass `defaults=[...]` to seed one.
+- **A registry is always truthy, even when empty.** Don't use `if registry:` to mean
+  "has agents"; use `len(registry)`.
+- **Agent ids are what the planner sees.** Keep ids and descriptions specific: a vague
+  description draws traffic away from the agent that can actually do the job.
+- **Plans depend on the prompt.** Changing descriptions or the order of registered agents can
+  change plans. Re-test plans after editing the registry.
+- **Don't use `langchain_google_genai`.** It is deprecated and can hang forever. Use `LLMClient`.
+- **Agent signature.** `process(self, query, context=None)`. `context` may be `None`.
