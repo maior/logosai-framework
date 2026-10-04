@@ -11,10 +11,13 @@ Validation Checks:
 5. First stage validation - First stage has no input_from
 """
 
+import asyncio
 import json
 import logging
+import os
 import re
-from typing import Dict, List, Optional, Set, Tuple
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .models import ExecutionPlan, ExecutionStage, AgentTask
 from .agent_registry import AgentRegistry, get_registry
@@ -60,6 +63,73 @@ JSON 만 출력하세요:
 {{"artifact": "요구된 산출물 또는 none", "missing_agent": "agent_id 또는 null"}}"""
 
 
+async def judge_artifact(
+    query: str,
+    planned: Set[str],
+    agents_info: Dict[str, str],
+    llm_invoke=None,
+) -> Dict[str, Any]:
+    """산출물 판정 — 결과를 상태로 구별해 돌려준다.
+
+    status:
+      missing            산출물을 요구했는데 만들 에이전트가 계획에 없다 (관문이 거는 경우)
+      ok                 산출물 요구가 있고 계획이 만들 수 있다
+      none               산출물 요구가 없다
+      self_contradiction 지목한 에이전트가 이미 계획에 있다
+      hallucinated       존재하지 않는 에이전트를 지목했다
+      unparsable         판정기 응답에서 JSON 을 못 찾았다
+      error              판정기 호출이 실패했다
+      skipped            판정할 입력이 없다 (쿼리·에이전트·판정기 부재)
+
+    '모름'(unparsable/error)을 '없음'(none)과 섞지 않는다 — 관찰 기록으로 정밀도를
+    재려면 판정기가 대답하지 못한 경우를 따로 세야 한다.
+    """
+    verdict: Dict[str, Any] = {"status": "skipped", "artifact": None, "missing_agent": None}
+    if not query or not agents_info or llm_invoke is None:
+        return verdict
+    try:
+        prompt = _ARTIFACT_PROMPT.format(
+            query=query,
+            planned="\n".join(f"- {a}: {agents_info.get(a, '')[:80]}"
+                               for a in sorted(planned)) or "- (없음)",
+            available="\n".join(f"- {a}: {d[:80]}"
+                                 for a, d in sorted(agents_info.items())),
+        )
+        raw = str(await llm_invoke(prompt))
+    except Exception as e:  # noqa: BLE001 — fail-open
+        logger.warning(f"[ArtifactGate] 판정 실패: {e}")
+        return {**verdict, "status": "error", "error": str(e)[:200]}
+    m = re.search(r"\{.*\}", raw, re.S)
+    try:
+        data = json.loads(m.group(0)) if m else None
+    except (ValueError, TypeError):
+        data = None
+    if not isinstance(data, dict):
+        return {**verdict, "status": "unparsable", "raw": raw[:200]}
+
+    artifact = str(data.get("artifact") or "").strip()
+    missing = data.get("missing_agent")
+    verdict.update(artifact=artifact or None,
+                   missing_agent=missing if isinstance(missing, str) else None)
+    if not artifact or artifact.lower() in ("none", "null", "없음"):
+        return {**verdict, "status": "none"}
+    if not missing or not isinstance(missing, str):
+        return {**verdict, "status": "ok"}
+    if missing in planned:          # 자기모순 — 이미 계획에 있다
+        return {**verdict, "status": "self_contradiction"}
+    if missing not in agents_info:  # 환각 — 없는 에이전트는 요구할 수 없다
+        logger.warning(f"[ArtifactGate] 존재하지 않는 에이전트 지목: {missing}")
+        return {**verdict, "status": "hallucinated"}
+    return {**verdict, "status": "missing"}
+
+
+def _artifact_errors(verdict: Dict[str, Any]) -> List[str]:
+    if verdict.get("status") != "missing":
+        return []
+    return [f"산출물 누락: '{verdict['artifact']}' 를 요구했으나 이를 만들 수 있는 "
+            f"{verdict['missing_agent']} 가 계획에 없습니다"]
+
+
 async def check_artifact_capability(
     query: str,
     planned: Set[str],
@@ -73,40 +143,55 @@ async def check_artifact_capability(
 
     Returns:
         오류 메시지 목록. 판정 불가·실패는 **빈 목록**(fail-open) — 관문 장애가
-        서비스 장애가 되면 안 된다.
+        서비스 장애가 되면 안 된다. 상태별 판정이 필요하면 judge_artifact.
     """
-    if not query or not agents_info or llm_invoke is None:
-        return []
-    try:
-        prompt = _ARTIFACT_PROMPT.format(
-            query=query,
-            planned="\n".join(f"- {a}: {agents_info.get(a, '')[:80]}"
-                               for a in sorted(planned)) or "- (없음)",
-            available="\n".join(f"- {a}: {d[:80]}"
-                                 for a, d in sorted(agents_info.items())),
-        )
-        raw = str(await llm_invoke(prompt))
-        m = re.search(r"\{.*\}", raw, re.S)
-        if not m:
-            return []
-        data = json.loads(m.group(0))
-    except Exception as e:  # noqa: BLE001 — fail-open
-        logger.warning(f"[ArtifactGate] 판정 실패: {e}")
-        return []
+    return _artifact_errors(await judge_artifact(query, planned, agents_info, llm_invoke))
 
-    artifact = str(data.get("artifact") or "").strip()
-    missing = data.get("missing_agent")
-    if not artifact or artifact.lower() in ("none", "null", "없음"):
-        return []
-    if not missing or not isinstance(missing, str):
-        return []
-    if missing in planned:          # 자기모순 — 이미 계획에 있다
-        return []
-    if missing not in agents_info:  # 환각 — 없는 에이전트는 요구할 수 없다
-        logger.warning(f"[ArtifactGate] 존재하지 않는 에이전트 지목: {missing}")
-        return []
-    return [f"산출물 누락: '{artifact}' 를 요구했으나 이를 만들 수 있는 "
-            f"{missing} 가 계획에 없습니다"]
+
+#: 관문 모드 — 값으로 판정한다 (존재 여부만 보면 "false" 가 켠다, 2026-08-22 사고)
+_GATE_ENV = "LOGOSAI_ARTIFACT_GATE"
+_GATE_OFF = ("off", "false", "0", "no", "disable", "disabled")
+
+
+def _gate_mode() -> str:
+    """off(기본) · observe · enforce. 모르는 값은 관찰로 — 오타가 집행을 켜거나
+    관문을 조용히 끄지 않게 한다.
+
+    기본이 off 인 이유: 판정기로 주입되는 플래너 LLM 호출이 이벤트 루프를 막는 동안은
+    관찰도 응답을 늦춘다 (실측 0.92s). 플래너가 비차단이 되면 observe 로 올린다.
+    """
+    raw = os.environ.get(_GATE_ENV, "off").strip().lower()
+    if raw in _GATE_OFF:
+        return "off"
+    if raw in ("observe", "enforce"):
+        return raw
+    logger.warning(f"[ArtifactGate] 알 수 없는 {_GATE_ENV}={raw!r} — observe 로 동작")
+    return "observe"
+
+
+def _record_artifact_verdict(*, mode: str, query: str, planned: List[str],
+                             verdict: Dict[str, Any], started_at: float) -> None:
+    """판정을 남긴다 — 관찰 기록이 쌓여야 집행 여부를 정할 수 있다.
+
+    Pulse span `validate.artifact_gate` (질의·계획 에이전트·판정 전체) + 로그.
+    기록 실패가 계획을 막으면 안 된다.
+    """
+    logger.info(f"[ArtifactGate] mode={mode} status={verdict.get('status')} "
+                f"artifact={verdict.get('artifact')!r} missing={verdict.get('missing_agent')!r}")
+    try:
+        from logosai.utils.trace_span import TraceSpan
+        TraceSpan.record(
+            name="validate.artifact_gate",
+            started_at=started_at,
+            agent_id="artifact_gate",
+            input_text=query[:200],
+            output=str(verdict.get("status")),
+            success=verdict.get("status") not in ("error", "unparsable"),
+            stage="plan",
+            metadata={"mode": mode, "planned": planned, "verdict": verdict},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[ArtifactGate] 기록 실패: {e}")
 
 
 class PlanValidator:
@@ -144,6 +229,8 @@ class PlanValidator:
         self.streamer = streamer
         # 산출물 관문용. 없으면 관문은 침묵한다 (문자열 매칭으로 되돌아가지 않는다).
         self.llm_invoke = llm_invoke
+        # 관찰 모드의 백그라운드 판정 — 참조를 쥐고 있어야 GC 로 사라지지 않는다
+        self._observe_tasks: Set["asyncio.Task"] = set()
 
     async def validate(self, plan: ExecutionPlan) -> "ValidationResult":
         """
@@ -233,21 +320,57 @@ class PlanValidator:
             raise
 
     async def _validate_artifact(self, plan: ExecutionPlan) -> List[str]:
-        """산출물 관문 배선. llm_invoke 가 주입되지 않으면 침묵한다."""
-        if self.llm_invoke is None:
+        """산출물 관문 배선. llm_invoke 가 주입되지 않으면 침묵한다.
+
+        off(기본)     — 돌리지 않는다.
+        observe       — 판정을 백그라운드로 돌려 기록만 하고 막지 않는다.
+        enforce       — 누락이면 오류로 올려 상위 재계획 루프를 태운다.
+
+        2026-08-18 도입 이후 이 함수는 레지스트리의 없는 메서드(list_agents)를 불러
+        매번 예외로 건너뛰었다 — 운영 로그 42건, 판정 0건. 실제 메서드는 get_all_agents.
+        """
+        mode = _gate_mode()
+        if mode == "off" or self.llm_invoke is None:
             return []
         try:
             agents_info: Dict[str, str] = {}
-            for entry in (self.registry.list_agents() or []):
+            for entry in (self.registry.get_all_agents() or []):
                 aid = getattr(entry, "agent_id", None)
                 if aid:
                     agents_info[aid] = str(getattr(entry, "description", "") or "")
-            planned = {t.agent_id for st in plan.stages for t in (st.agents or [])}
-            return await check_artifact_capability(
-                plan.query or "", planned, agents_info, self.llm_invoke)
         except Exception as e:  # noqa: BLE001 — 관문 장애가 검증을 죽이면 안 된다
             logger.warning(f"[PlanValidator] 산출물 관문 건너뜀: {e}")
             return []
+        planned = {t.agent_id for st in plan.stages for t in (st.agents or [])}
+        query = plan.query or ""
+
+        if mode == "enforce":
+            started = time.time()
+            verdict = await judge_artifact(query, planned, agents_info, self.llm_invoke)
+            _record_artifact_verdict(mode=mode, query=query, planned=sorted(planned),
+                                     verdict=verdict, started_at=started)
+            return _artifact_errors(verdict)
+
+        task = asyncio.create_task(self._observe_artifact(query, planned, agents_info))
+        self._observe_tasks.add(task)
+        task.add_done_callback(self._observe_tasks.discard)
+        return []
+
+    async def _observe_artifact(self, query: str, planned: Set[str],
+                                agents_info: Dict[str, str]) -> None:
+        started = time.time()
+        try:
+            verdict = await judge_artifact(query, planned, agents_info, self.llm_invoke)
+        except Exception as e:  # noqa: BLE001 — 관찰이 서비스를 해치면 안 된다
+            verdict = {"status": "error", "artifact": None, "missing_agent": None,
+                       "error": str(e)[:200]}
+        _record_artifact_verdict(mode="observe", query=query, planned=sorted(planned),
+                                 verdict=verdict, started_at=started)
+
+    async def wait_observations(self) -> None:
+        """진행 중인 관찰 판정이 끝날 때까지 기다린다 (테스트·종료 처리용)."""
+        if self._observe_tasks:
+            await asyncio.gather(*list(self._observe_tasks), return_exceptions=True)
 
     def _validate_structure(self, plan: ExecutionPlan) -> List[str]:
         """Validate basic plan structure"""
