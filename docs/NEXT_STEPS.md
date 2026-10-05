@@ -1,8 +1,29 @@
 # LogosAI Framework — 다음 진행 작업
 
-> 최종 업데이트: 2026-07-15
+> 최종 업데이트: 2026-10-05
 > Agentic 프레임워크 업그레이드 트랙 진행 중 — 상세 로드맵·진행 로그:
 > `../../docs/AGENTIC_FRAMEWORK_UPGRADE_ROADMAP.md`
+
+## ✅ 오케스트레이터 통합 (2026-10-04~05)
+
+계획·검증·실행의 정본을 `logosai.orchestration` 하나로 모았다 (`planner`·
+`workflow_orchestrator`·`execution_engine`·`plan_validator` 등). ontology 는 이를 상속한
+Logos 인스턴스이고, 구 `logosai.workflow.WorkflowEngine` 도 같은 플래너로 계획한다
+(키워드 사전 필터 제거, `total_tasks == 0` 호스트 계약 유지).
+
+함께 고친 것: `AgentRegistry` 빈 상태 시작(`defaults=` 주입, 항상 참) · LLM 출력 잘림
+표시(`metadata["truncated"]`, 3 프로바이더 일반·도구 호출) · 호출별 `max_tokens` 가
+openai·anthropic 에서 무시되던 결함 · 실행기가 `AgentResponse` 를 돌려주면 단계 간
+데이터가 끊기던 결함 · LLM 용 가이드 `logosai/llms.txt` (`python -m logosai.guide`,
+예제는 테스트가 실행).
+
+**남은 것**
+- PyPI 릴리스: ontology 의 별칭이 `logosai.orchestration` 을 import 하므로 다음 logosai
+  릴리스 전까지 ontology 공개본과 PyPI logosai 가 맞지 않는다. 릴리스 후 ontology 의
+  `logosai` 하한을 올린다.
+- 유령 `rag_search_agent` 제거와 플래너 프롬프트 취약성 — '정답' 기준 평가셋 필요.
+- SDK `final_output` 이 계획마다 모양이 다르고 `ResultAggregator` 는 쓰이지 않는다.
+- LLMClient 기본 `max_tokens` 2000 — 잘림 빈도를 본 뒤 결정.
 
 ## 🔄 진행 중: Agentic 업그레이드 트랙 (2026-07-15 ~)
 
