@@ -19,7 +19,7 @@ services:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
       POSTGRES_DB: logosai
     ports:
       - "5432:5432"
@@ -54,7 +54,7 @@ services:
     ports:
       - "8090:8090"
     environment:
-      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/logosai"
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/logosai"
       ACP_SERVER_URL: "http://acp:8888"
       JWT_SECRET_KEY: "logosai-quickstart-secret-change-in-production"
       CORS_ORIGINS: '["http://localhost:8010","http://localhost:3000"]'

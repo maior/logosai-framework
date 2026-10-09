@@ -1,7 +1,7 @@
 """Phase G: Observability — MetricsCollector 단위 테스트.
 
 PostgreSQL에 직접 기록/조회 테스트.
-서버: 211.180.253.250:5432/logosai (logosus 스키마)
+서버: LOGOSAI_TEST_DB_URL 이 가리키는 DB (logosus 스키마)
 
 테스트:
 T1. record_execution — 실행 기록 + DB 확인
@@ -27,7 +27,8 @@ _logos_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 sys.path.insert(0, os.path.join(_logos_root, "logos_api"))
 
 # DB connection
-DB_URL = "postgresql+asyncpg://logosai:logosai1234@211.180.253.250:5432/logosai"
+# 공개 저장소에 접속 정보를 두지 않는다 (2026-10-09) — 환경변수로만
+DB_URL = os.getenv("LOGOSAI_TEST_DB_URL", "").replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 async def main():
@@ -228,4 +229,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    if not DB_URL:
+        sys.exit("LOGOSAI_TEST_DB_URL 미설정 — 실행하지 않는다 (쓰고 지우는 테스트라 운영 DB 를 가리키지 말 것)")
     asyncio.run(main())

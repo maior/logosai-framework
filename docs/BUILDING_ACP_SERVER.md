@@ -894,7 +894,7 @@ OPENAI_API_KEY=your-openai-key        # Optional
 ANTHROPIC_API_KEY=your-anthropic-key   # Optional
 
 # Database (if agents need DB access)
-LOGOSAI_DB_URL=postgresql://user:pass@host:5432/dbname
+LOGOSAI_DB_URL=postgresql://<user>:<password>@<host>:5432/<dbname>
 
 # Server config
 ACP_PORT=8888

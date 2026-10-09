@@ -20,12 +20,19 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+# DB 주소는 환경변수로만 받는다 — 공개 저장소에 접속 정보를 두지 않는다 (2026-10-09).
+# 없으면 이 파일의 DB 테스트는 건너뛴다. 지우고 쓰는 테스트라 운영 DB 를 가리키지 말 것.
+TEST_DB_URL = os.getenv("LOGOSAI_TEST_DB_URL", "")
+
+
 # DB 연결 가능 여부 확인
 def _db_available():
+    if not TEST_DB_URL:
+        return False
     try:
         import psycopg2
         conn = psycopg2.connect(
-            'postgresql://logosai:logosai1234@211.180.253.250:5432/logosai',
+            TEST_DB_URL,
             connect_timeout=3,
         )
         conn.close()
@@ -47,7 +54,7 @@ AGENT_ID = f"test_embed_{int(time.time())}"
 async def store():
     """테스트용 AgentMemoryStore 인스턴스."""
     from logosai.storage.agent_memory_store import AgentMemoryStore
-    s = AgentMemoryStore(db_url="postgresql://logosai:logosai1234@211.180.253.250:5432/logosai")
+    s = AgentMemoryStore(db_url=TEST_DB_URL)
     await s.initialize()
     yield s
     # Cleanup
@@ -66,7 +73,7 @@ class TestEmbeddingStore:
         await store.store(AGENT_ID, "서울 날씨", "봄철 서울은 10-15도", importance=0.8)
 
         import psycopg2
-        conn = psycopg2.connect('postgresql://logosai:logosai1234@211.180.253.250:5432/logosai', connect_timeout=3)
+        conn = psycopg2.connect(TEST_DB_URL, connect_timeout=3)
         cur = conn.cursor()
         cur.execute("SELECT embedding FROM agent_memories WHERE agent_id = %s AND key = %s", (AGENT_ID, "서울 날씨"))
         row = cur.fetchone()
