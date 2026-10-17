@@ -5,6 +5,7 @@ Usage:
     logosai serve [--port 9000]   Start agent server
     logosai status                Show agent server status
     logosai agents                List registered agents
+    logosai mcp --acp URL         Expose an ACP server to MCP clients (Claude Code, Codex) over stdio
 """
 
 import argparse
@@ -132,6 +133,18 @@ def cmd_agents(args):
         print("  Start with: logosai serve")
 
 
+def cmd_mcp(args):
+    """ACP 서버를 MCP stdio 서버로 노출한다 (Claude Code · Codex 등에서 `mcp add`)."""
+    from logosai.mcp_bridge import HttpAcpTransport, McpBridge, serve_stdio
+    token = os.environ.get("LOGOSAI_ACP_TOKEN", "")       # 인자로 받지 않는다 — 설정 파일에 평문으로 남는다
+    allow = [a.strip() for a in (args.agents or "").split(",") if a.strip()]
+    bridge = McpBridge(HttpAcpTransport(args.acp, token=token, timeout=args.timeout),
+                       mode=args.mode, allow=allow or None)
+    print(f"logosai mcp → {args.acp} (mode={args.mode}, allow={allow or 'all'}, "
+          f"token={'set' if token else 'none'})", file=sys.stderr)
+    asyncio.run(serve_stdio(bridge))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="logosai",
@@ -154,6 +167,21 @@ def main():
     p_agents = sub.add_parser("agents", help="List registered agents")
     p_agents.add_argument("--port", type=int, default=9000)
 
+    # mcp
+    p_mcp = sub.add_parser(
+        "mcp", help="Expose an ACP server as an MCP stdio server",
+        description="ACP 서버(Logos ACP · logosai serve)를 MCP 클라이언트에 stdio 로 노출한다.\n"
+                    "  claude mcp add logosai -- logosai mcp --acp http://localhost:8888\n"
+                    "  codex  mcp add logosai -- logosai mcp --acp http://localhost:8888\n"
+                    "인증 토큰은 환경변수 LOGOSAI_ACP_TOKEN 으로만 받는다.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_mcp.add_argument("--acp", default=os.environ.get("LOGOSAI_ACP_URL", "http://localhost:9000"),
+                       help="ACP 서버 주소 (기본: $LOGOSAI_ACP_URL 또는 http://localhost:9000)")
+    p_mcp.add_argument("--mode", choices=["router", "direct"], default="router",
+                       help="router: logosai_agents+logosai_ask 두 도구(기본) / direct: 에이전트별 도구")
+    p_mcp.add_argument("--agents", default="", help="허용할 에이전트 id 목록(쉼표). 비우면 전체")
+    p_mcp.add_argument("--timeout", type=float, default=300.0, help="에이전트 실행 제한 시간(초)")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -164,6 +192,8 @@ def main():
         cmd_status(args)
     elif args.command == "agents":
         cmd_agents(args)
+    elif args.command == "mcp":
+        cmd_mcp(args)
     else:
         parser.print_help()
 

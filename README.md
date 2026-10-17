@@ -119,7 +119,32 @@ curl localhost:9000/jsonrpc -H "Content-Type: application/json" \
 curl -N "localhost:9000/stream?query=3+5&agent_id=math_agent"
 ```
 
-### 5. LLM Client (Multi-Provider)
+### 5. Use Your Agents from Claude Code · Codex (MCP)
+
+`logosai mcp` exposes any ACP server — `logosai serve` or a full ACP deployment — to MCP
+clients over stdio. The bridge speaks ACP (`list_agents` + `POST /stream`), so the server
+needs no extra endpoint.
+
+```bash
+# Claude Code
+claude mcp add logosai -- logosai mcp --acp http://localhost:9000
+# Codex
+codex mcp add logosai -- logosai mcp --acp http://localhost:9000
+```
+
+| Option | Meaning |
+|---|---|
+| `--mode router` (default) | Two tools: `logosai_agents` (list) and `logosai_ask(query, agent_id?)`. Without `agent_id` the server picks the agent |
+| `--mode direct` | One tool per agent |
+| `--agents a,b` | Allowlist. Anything else is refused **before** it reaches the server; with an allowlist, `logosai_ask` requires `agent_id` |
+| `--timeout 300` | Seconds per agent run |
+| `LOGOSAI_ACP_TOKEN` (env) | Bearer token. Not accepted as a flag — flags end up in plaintext in the client's config file |
+
+Keep agents that touch files, mail or the desktop out of the allowlist unless you mean to
+let an external AI call them. Codex asks for approval on each MCP tool call; in
+non-interactive `codex exec` use `--approve-for-me`.
+
+### 6. LLM Client (Multi-Provider)
 
 ```python
 from logosai import LLMClient
