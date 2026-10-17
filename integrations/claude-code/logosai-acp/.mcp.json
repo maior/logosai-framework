@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "logosai": {
+      "command": "${user_config.logosai_bin}",
+      "args": ["mcp", "--acp", "${user_config.acp_url}", "--agents", "${user_config.agents}"]
+    }
+  }
+}

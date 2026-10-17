@@ -1,0 +1,30 @@
+{
+  "name": "logosai-acp",
+  "version": "0.1.0",
+  "description": "LogosAI ACP agents as tools in Claude Code — connects through the `logosai mcp` stdio bridge.",
+  "author": { "name": "LogosAI" },
+  "homepage": "https://github.com/maior/logosai-framework",
+  "license": "MIT",
+  "keywords": ["mcp", "agents", "logosai", "acp"],
+  "userConfig": {
+    "logosai_bin": {
+      "type": "string",
+      "title": "logosai executable",
+      "description": "Full path to the logosai command (e.g. /path/to/venv/bin/logosai). Use 'logosai' only if it is on PATH. Install with: pip install logosai",
+      "default": "logosai"
+    },
+    "acp_url": {
+      "type": "string",
+      "title": "ACP server URL",
+      "description": "Base URL of the ACP server (logosai serve defaults to http://localhost:9000)",
+      "default": "http://localhost:9000",
+      "required": true
+    },
+    "agents": {
+      "type": "string",
+      "title": "Allowed agents",
+      "description": "Comma-separated agent ids Claude may call. Leave out agents that touch files, mail or the desktop unless you mean to allow that.",
+      "required": true
+    }
+  }
+}

@@ -140,6 +140,17 @@ codex mcp add logosai -- logosai mcp --acp http://localhost:9000
 | `--timeout 300` | Seconds per agent run |
 | `LOGOSAI_ACP_TOKEN` (env) | Bearer token. Not accepted as a flag — flags end up in plaintext in the client's config file |
 
+**Claude Code plugin** — installs the bridge, two commands and a usage skill in one step:
+
+```text
+/plugin marketplace add maior/logosai-framework
+/plugin install logosai-acp@logosai
+```
+
+On install Claude Code asks for the `logosai` executable path, the ACP URL and the agent
+allowlist (change them later with `/plugin configure logosai-acp`). Commands:
+`/logosai-acp:ask [agent_id] <question>` and `/logosai-acp:agents`.
+
 Keep agents that touch files, mail or the desktop out of the allowlist unless you mean to
 let an external AI call them. Codex asks for approval on each MCP tool call; in
 non-interactive `codex exec` use `--approve-for-me`.

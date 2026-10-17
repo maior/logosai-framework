@@ -1,0 +1,14 @@
+{
+  "name": "logosai",
+  "owner": {
+    "name": "LogosAI"
+  },
+  "description": "Claude Code plugins for the LogosAI agent framework",
+  "plugins": [
+    {
+      "name": "logosai-acp",
+      "source": "./integrations/claude-code/logosai-acp",
+      "description": "LogosAI ACP agents as Claude Code tools (logosai mcp bridge)"
+    }
+  ]
+}
