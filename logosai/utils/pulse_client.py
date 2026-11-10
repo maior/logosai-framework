@@ -65,6 +65,10 @@ def _spool_append(endpoint: str, data: dict) -> None:
     """실패한 페이로드를 디스크에 쌓는다. 실패해도 조용히 넘어간다."""
     if endpoint not in _SPOOLABLE:
         return  # 멱등하지 않은 endpoint 는 재전송 시 중복되므로 버린다
+    # 막힌 전송은 쌓지도 않는다 (2026-11-10). 대기 파일은 나중에 다시 보내지므로, 여기서 쌓으면
+    # '막았다'가 '나중에 보낸다'가 된다 — 시험 실행 한 번에 시험용 span 18건이 실제 대기 파일에 쌓였다.
+    if _sending_blocked():
+        return
     try:
         os.makedirs(os.path.dirname(_SPOOL_PATH), exist_ok=True)
         with open(_SPOOL_PATH, "a") as f:

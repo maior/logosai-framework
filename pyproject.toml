@@ -127,3 +127,6 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 asyncio_mode = "auto"
+markers = [
+    "live: needs a running server, a database, or real API keys — run with LOGOSAI_LIVE_TESTS=1",
+]

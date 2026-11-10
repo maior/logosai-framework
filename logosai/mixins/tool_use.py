@@ -127,6 +127,8 @@ class ToolUseMixin:
         and repeats until it has enough information to answer.
         """
         from ..agent_types import AgentResponse, AgentResponseType
+        # 지연 import: 모듈 최상단에서 하면 utils/__init__ → agent 순환에 걸린다.
+        from ..utils.guardrails import HarnessBudgetExceeded
 
         if not self.initialized:
             await self.initialize()
@@ -173,6 +175,8 @@ class ToolUseMixin:
                     llm.invoke_with_tools(messages, tools=tools),
                     timeout=15,
                 )
+            except HarnessBudgetExceeded:
+                raise  # 예산 초과는 '실패한 LLM 호출'이 아니다 — 삼키면 하네스 차단이 정상 답으로 둔갑한다
             except (asyncio.TimeoutError, Exception) as e:
                 self.logger.warning(f"Tool loop LLM call failed (iter {iteration}): {e}")
                 break

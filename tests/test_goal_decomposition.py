@@ -12,6 +12,11 @@ import re
 import sys
 import os
 
+# live: 진짜 LLM 을 호출한다(API 키 필요) — LOGOSAI_LIVE_TESTS=1 로만 돈다
+if "pytest" in sys.modules:
+    import pytest
+    pytestmark = pytest.mark.live
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # ============================================================

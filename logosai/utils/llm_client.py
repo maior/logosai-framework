@@ -711,9 +711,65 @@ class LLMClient:
         tools: List[Dict[str, Any]],
         **kwargs,
     ) -> LLMResponse:
-        """LLM 호출 with function calling (도구 사용) — 응답에 잘림 여부를 싣는다."""
+        """LLM 호출 with function calling (도구 사용) — 응답에 잘림 여부를 싣는다.
+
+        하네스 신규 경로(2026-11-10): 이 경로는 제공자를 직접 불러 예산·레이트리밋·
+        메트릭을 전부 건너뛰었다(실측: 상한 3 에 10회가 다 돌았다).
+        LOGOSAI_HARNESS_NEW_PATHS 로 다스린다 — observe(기본)는 세기만, enforce 는
+        invoke_messages 와 같은 가드레일을 지나고, off 는 예전 그대로다.
+        """
+        import time as _time
+        try:
+            from . import guardrails as _gr
+            _mode = _gr.new_paths_mode()
+        except Exception:  # noqa: BLE001 — guardrails 없으면 예전 동작
+            _gr, _mode = None, "off"
+
+        if _mode == "enforce":
+            # invoke_messages 와 같은 전역 가드레일. observe 에서 걸지 않는 이유:
+            # 분당 한도 대기·요청당 호출 상한이 지금 도는 도구 루프를 느리게/죽게 한다.
+            try:
+                await _gr.get_rate_limiter().acquire()
+                _gr.get_request_counter().increment()
+            except Exception as guard_err:
+                if "limit exceeded" in str(guard_err).lower():
+                    raise
+                logger.debug(f"Guardrail check: {guard_err}")
+        if _mode != "off":
+            # enforce 면 HarnessBudgetExceeded 가 상위 하네스 래퍼로 전파된다.
+            _gr.precheck_llm_call("tools")
+
+        _start_time = _time.time()
         response = await self._dispatch_with_tools(messages, tools, **kwargs)
         self._mark_truncation(response, kwargs)
+
+        if _mode != "off":
+            try:
+                # 프롬프트 폴백이면 invoke_messages 가 이미 세고 보고했다 — 건너뛴다.
+                if not getattr(response, "_counted_by_messages", False):
+                    _tok = self._extract_token_usage(response)
+                    _gr.record_llm_tokens(_tok.get("input", 0), _tok.get("output", 0),
+                                          path="tools")
+                    # 비용 기록 — 도구 경로의 LLM 호출은 그동안 메트릭에 안 잡혔다.
+                    if LLMClient._metrics_callback:
+                        _preview = ""
+                        for m in messages:
+                            _role = m.get("role") if isinstance(m, dict) else getattr(m, "role", "")
+                            if _role == "user":
+                                _c = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+                                _preview = (_c or "")[:200]
+                                break
+                        LLMClient._metrics_callback({
+                            "model": self.model,
+                            "provider": self.provider,
+                            "input_tokens": _tok.get("input", 0),
+                            "output_tokens": _tok.get("output", 0),
+                            "duration_ms": (_time.time() - _start_time) * 1000,
+                            "success": True,
+                            "prompt_preview": _preview,
+                        })
+            except Exception:
+                pass  # 계측이 LLM 응답을 절대 훼손하지 않도록
         return response
 
     async def _dispatch_with_tools(
@@ -1012,7 +1068,22 @@ class LLMClient:
         else:
             messages.insert(0, LLMMessage(role="system", content=tool_prompt))
 
+        # 이 폴백은 invoke_with_tools → _dispatch_with_tools 로만 들어오고, 거기서
+        # 도구 경로로 이미 1건 셌다. 아래 invoke_messages 가 같은 호출을 또 세므로
+        # **부르기 전에** 되돌린다 — 뒤에 되돌리면 상한 직전 호출이 2건으로 보여
+        # 그 자리에서 잘린다(거짓 차단).
+        try:
+            from .guardrails import refund_llm_call
+            refund_llm_call("tools")
+        except Exception:
+            pass
         response = await self.invoke_messages(messages, **kwargs)
+        # invoke_messages 가 예산·메트릭을 이미 처리했다는 표시 —
+        # invoke_with_tools 가 이 호출을 한 번 더 기록하지 않게 한다.
+        try:
+            response._counted_by_messages = True
+        except Exception:
+            pass
 
         # Parse tool_call from JSON response
         import re

@@ -51,6 +51,7 @@ def test_call_tool_http_method_exists():
     assert callable(agent.call_tool_http)
 
 
+@pytest.mark.live  # 실행 중인 aicoach 서버(:8718)가 필요하다
 @aicoach_required
 def test_post_returns_grounded_json():
     """POST + json payload → 파싱된 JSON dict 반환 (grounded 응답)."""
@@ -65,6 +66,7 @@ def test_post_returns_grounded_json():
     assert "error" not in r, f"에러 반환됨: {r.get('error')}"
 
 
+@pytest.mark.live  # 실행 중인 aicoach 서버(:8718)가 필요하다
 @aicoach_required
 def test_get_with_korean_params_url_encoded():
     """GET + 한글 params → 자동 URL 인코딩되어 정상 응답 (수기 curl 400 재발 방지)."""
@@ -78,6 +80,7 @@ def test_get_with_korean_params_url_encoded():
     assert "clauses" in r, f"약관 조항 없음(URL 인코딩 실패 의심): {list(r.keys())}"
 
 
+@pytest.mark.live  # 실행 중인 aicoach 서버(:8718)가 필요하다
 @aicoach_required
 def test_get_params_with_bool_and_none_sanitized():
     """GET params 에 bool/None 이 있어도 aiohttp 타입 에러 없이 처리(coerce/drop).
@@ -97,6 +100,7 @@ def test_get_params_with_bool_and_none_sanitized():
     assert "rules" in r or "error" not in r, r
 
 
+@pytest.mark.live  # 실행 중인 aicoach 서버(:8718)가 필요하다
 @aicoach_required
 def test_error_returns_dict_not_raise():
     """존재하지 않는 경로 → 예외 대신 error dict 반환 (relay 가 graceful 처리 가능)."""

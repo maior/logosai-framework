@@ -14,6 +14,7 @@ from loguru import logger
 
 # LogosAI imports
 from ..utils.llm_client import LLMClient
+from ..utils.guardrails import HarnessBudgetExceeded
 
 
 class AgenticState(Enum):
@@ -227,6 +228,8 @@ class AgenticCore:
             logger.info(f"Thought process completed with confidence: {thought.confidence}")
             return thought
             
+        except HarnessBudgetExceeded:
+            raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
         except Exception as e:
             logger.error(f"Error during thinking: {e}")
             # Return a basic thought process on error
@@ -345,6 +348,8 @@ class AgenticCore:
             logger.info(f"Created plan with {len(plan.actions)} actions")
             return plan
             
+        except HarnessBudgetExceeded:
+            raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
         except Exception as e:
             logger.error(f"Error during planning: {e}")
             # Return a simple fallback plan
@@ -447,6 +452,8 @@ class AgenticCore:
             logger.info(f"Action {action.name} completed: success={result.get('success', False)}")
             return result
 
+        except HarnessBudgetExceeded:
+            raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
         except Exception as e:
             logger.error(f"Error during action execution: {e}")
             return {
@@ -540,6 +547,8 @@ class AgenticCore:
                        f"new confidence={self.current_confidence}")
             return reflection
             
+        except HarnessBudgetExceeded:
+            raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
         except Exception as e:
             logger.error(f"Error during reflection: {e}")
             reflection = Reflection(

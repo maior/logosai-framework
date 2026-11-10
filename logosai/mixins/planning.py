@@ -31,6 +31,8 @@ class PlanningMixin:
         executes in order, combines results.
         """
         from ..agent_types import AgentResponse, AgentResponseType
+        # 지연 import: 모듈 최상단에서 하면 utils/__init__ → agent 순환에 걸린다.
+        from ..utils.guardrails import HarnessBudgetExceeded
         from ..agentic.planner import plan_goal, execute_goal_tree
 
         if not self.initialized:
@@ -40,6 +42,8 @@ class PlanningMixin:
 
         try:
             tree = await plan_goal(query, llm=llm)
+        except HarnessBudgetExceeded:
+            raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
         except Exception as e:
             self.logger.warning(f"Plan failed, falling back to react: {e}")
             return await self.react(query, tools, tool_executors, system_prompt, context=context)
@@ -86,6 +90,8 @@ class PlanningMixin:
                     f"종합적이고 정리된 최종 답변을 작성하세요."
                 ), timeout=15)
                 final = synth.content if hasattr(synth, 'content') else str(synth)
+            except HarnessBudgetExceeded:
+                raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
             except Exception:
                 final = combined
         else:
@@ -115,6 +121,8 @@ class PlanningMixin:
         Yields SSE events as each sub-goal executes.
         """
         from ..agent_types import AgentResponse, AgentResponseType
+        # 지연 import: 모듈 최상단에서 하면 utils/__init__ → agent 순환에 걸린다.
+        from ..utils.guardrails import HarnessBudgetExceeded
         from ..agentic.planner import plan_goal, execute_goal_tree_stream
         import time as _time
 
@@ -125,6 +133,8 @@ class PlanningMixin:
 
         try:
             tree = await plan_goal(query, llm=llm)
+        except HarnessBudgetExceeded:
+            raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
         except Exception as e:
             yield {"type": "error", "data": {"error": f"Plan failed: {e}"}, "timestamp": _time.time()}
             return
@@ -180,6 +190,8 @@ class PlanningMixin:
                     f"질문: {query}\n\n결과:\n{combined[:3000]}\n\n종합 답변 작성."
                 ), timeout=15)
                 final = synth.content if hasattr(synth, 'content') else str(synth)
+            except HarnessBudgetExceeded:
+                raise  # 예산 초과를 삼키면 하네스 차단이 폴백 뒤에 숨는다
             except Exception:
                 final = combined
         else:

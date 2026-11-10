@@ -47,6 +47,9 @@ def _api_key_available():
 
 SKIP_DB = not _db_available()
 SKIP_API = not _api_key_available()
+
+# live: Postgres(LOGOSAI_TEST_DB_URL) + 진짜 Gemini 임베딩 API 가 필요하다 — LOGOSAI_LIVE_TESTS=1 로만 돈다
+pytestmark = pytest.mark.live
 AGENT_ID = f"test_embed_{int(time.time())}"
 
 

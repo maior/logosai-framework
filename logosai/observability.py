@@ -284,6 +284,17 @@ def _current_trace_id() -> Optional[str]:
         return None
 
 
+def _budget_hook(name: str):
+    """guardrails 의 예산 함수를 부른다. 예산이 없으면 no-op. 절대 예외를 내지 않는다."""
+    try:
+        from logosai.utils import guardrails as _gr
+        if not _gr.budget_active():
+            return None
+        return getattr(_gr, name)()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def observe_process(process_fn: Callable) -> Callable:
     """async process(self, query, context=None) 를 관측 래핑.
 
@@ -313,7 +324,10 @@ def observe_process(process_fn: Callable) -> Callable:
             try:
                 from logosai.utils.guardrails import begin_execution_budget
                 max_calls, max_tokens = resolve_harness_budget(self)
-                budget_tok = begin_execution_budget(max_calls, max_tokens)
+                # agent_id 를 넘기는 이유: 신규 경로의 would_block 이벤트를 guardrails 가
+                # 발행하는데, 거기서는 어느 에이전트인지 알 길이 없다.
+                budget_tok = begin_execution_budget(max_calls, max_tokens,
+                                                    agent_id=agent_id)
             except Exception:
                 budget_tok = None
         # 유효 한도를 span 에 실어 관측 쪽이 '한도 대비 실행시간'을 판정할 수 있게.
@@ -327,11 +341,22 @@ def observe_process(process_fn: Callable) -> Callable:
         t0 = time.monotonic()
         success, err = True, None
         block_kind = None  # 하네스 차단 종류 — span metadata 로도 남긴다
+        usage = {}         # 실행이 끝날 때의 예산 사용량 (span metadata 용)
+
+        async def _run():
+            # wait_for 는 본문을 새 태스크에서 돌린다(3.11). 여기서 소유권을 넘겨받지
+            # 않으면 본문의 평범한 호출이 '자식 태스크 호출'로 잘못 분류된다.
+            # 사용량도 여기서 읽는다 — 바깥 태스크의 정수 계수는 0 인 채다.
+            _budget_hook("claim_execution_owner")
+            try:
+                return await process_fn(self, query, context)
+            finally:
+                usage.update(_budget_hook("execution_usage") or {})
+
         try:
             if h_enabled and h_timeout and h_timeout > 0:
                 try:
-                    return await _aio.wait_for(
-                        process_fn(self, query, context), timeout=h_timeout)
+                    return await _aio.wait_for(_run(), timeout=h_timeout)
                 except _aio.TimeoutError:
                     # 하네스 타임아웃 — 매달리지 않고 graceful error 반환.
                     success, err = False, f"harness timeout ({h_timeout}s)"
@@ -339,7 +364,8 @@ def observe_process(process_fn: Callable) -> Callable:
                     emit_harness_block("timeout", agent_id, err,
                                        {"timeout_s": h_timeout})
                     return _timeout_response(agent_id, h_timeout)
-            return await process_fn(self, query, context)
+            return await (_run() if budget_tok is not None
+                          else process_fn(self, query, context))
         except _HarnessBudgetExceeded as be:  # 호출/토큰 상한 초과 → graceful
             success, err = False, str(be)
             block_kind = "budget"
@@ -362,10 +388,13 @@ def observe_process(process_fn: Callable) -> Callable:
                 if span is not None:
                     # 차단이면 사유를 span 본문·metadata 에 남긴다. 예전엔 output=""
                     # 이라 "status=error 인데 왜인지 알 수 없는 span" 만 남았다.
+                    meta = {"harness_block": block_kind} if block_kind else {}
+                    if usage:
+                        meta["harness_usage"] = usage  # 실행당 호출 수가 처음으로 보인다
                     span.end(
                         success=success,
                         output=(err or "") if block_kind else "",
-                        metadata={"harness_block": block_kind} if block_kind else None,
+                        metadata=meta or None,
                     )
             except Exception:
                 pass
@@ -379,4 +408,138 @@ def observe_process(process_fn: Callable) -> Callable:
                     pass
 
     _wrapped._logos_observed = True  # type: ignore[attr-defined]
+    return _wrapped
+
+
+def _new_paths_mode() -> str:
+    """LOGOSAI_HARNESS_NEW_PATHS — 판정은 guardrails 한 곳. 못 읽으면 off(예전 동작)."""
+    try:
+        from logosai.utils.guardrails import new_paths_mode
+        return new_paths_mode()
+    except Exception:  # noqa: BLE001
+        return "off"
+
+
+def observe_stream(stream_fn: Callable) -> Callable:
+    """async generator process_stream(self, query, context=None) 를 하네스로 감싼다.
+
+    실측(2026-11-10): 타임아웃 2초에 4초짜리 스트림이 끝까지 돌았다 —
+    `__init_subclass__` 가 process 만 감쌌기 때문이다. 스트림 안의 LLM 호출도
+    예산 밖이었다.
+
+    새로 덮는 경로라 LOGOSAI_HARNESS_NEW_PATHS 를 따른다:
+      - off / 하네스 비활성 → 원본을 그대로 흘린다.
+      - observe(기본) → 세고, 넘으면 `harness.would_block` 1회. 끊지 않는다.
+      - enforce → 타임아웃·예산 초과에서 끊고 error 이벤트 하나로 끝낸다.
+
+    이미 감싼 함수(_logos_stream_observed)는 그대로 반환(이중 래핑 방지).
+    래퍼도 async generator **함수**다 — 호출부가 inspect.isasyncgenfunction 으로
+    스트리밍 지원을 판정해도 결과가 바뀌지 않게.
+    """
+    if getattr(stream_fn, "_logos_stream_observed", False):
+        return stream_fn
+
+    @functools.wraps(stream_fn)
+    async def _wrapped(self, query, context=None):
+        import asyncio as _aio
+        h_enabled, h_timeout = resolve_harness(self)
+        mode = _new_paths_mode()
+        if not h_enabled or mode == "off":
+            async for item in stream_fn(self, query, context):
+                yield item
+            return
+
+        from logosai.utils import guardrails as _gr
+        enforce = mode == "enforce"
+        agent_id = harness_agent_id(self)
+        has_timeout = bool(h_timeout and h_timeout > 0)
+        # 이미 예산이 열려 있으면(process 안에서 부른 스트림) 두 번째를 열지 않는다 —
+        # 열면 바깥 실행의 계수가 0 으로 가려진다.
+        own_budget = not _gr.budget_active()
+        max_calls = max_tokens = None
+        if own_budget:
+            max_calls, max_tokens = resolve_harness_budget(self)
+        resume = None       # 항목 사이에 내려 둔 예산 계수
+        warned = False      # observe: 타임아웃 would_block 은 1회
+        cut = None          # enforce: ("timeout"|"budget", 메시지)
+        inner = stream_fn(self, query, context)
+        t0 = time.monotonic()
+        try:
+            while True:
+                # 예산은 **다음 항목을 기다리는 동안에만** 연다. 제너레이터 본문에서
+                # 세운 ContextVar 는 소비자 컨텍스트에 남으므로, yield 를 걸쳐 열어 두면
+                # 소비자가 항목 사이에 한 LLM 호출까지 이 스트림의 예산에 걸린다.
+                # (제너레이터가 다른 컨텍스트에서 정리되면 reset 도 실패해 영영 남는다.)
+                tok = None
+                if own_budget:
+                    try:
+                        tok = _gr.begin_execution_budget(
+                            max_calls, max_tokens, agent_id=agent_id,
+                            observe_only=not enforce, resume=resume)
+                    except Exception:  # noqa: BLE001
+                        tok = None
+                try:
+                    if enforce and has_timeout:
+                        remaining = h_timeout - (time.monotonic() - t0)
+                        if remaining <= 0:
+                            cut = ("timeout", f"harness timeout ({h_timeout}s)")
+                            break
+                        # wait_for 가 아니라 timeout(): 태스크를 갈아타지 않는다.
+                        # 스트림이 yield 를 걸쳐 쥔 것(cancel scope 등)이 깨지지 않게.
+                        cm = _aio.timeout(remaining)
+                        try:
+                            async with cm:
+                                item = await inner.__anext__()
+                        except TimeoutError:
+                            if not cm.expired():
+                                raise  # 스트림 자신의 TimeoutError — 하네스 차단이 아니다
+                            cut = ("timeout", f"harness timeout ({h_timeout}s)")
+                            break
+                    else:
+                        item = await inner.__anext__()
+                except StopAsyncIteration:
+                    break
+                except _HarnessBudgetExceeded as be:
+                    if not enforce:
+                        raise  # 바깥(process) 예산이 던진 것 — 예전처럼 그쪽 래퍼가 받는다
+                    cut = ("budget", str(be))
+                    break
+                finally:
+                    if tok is not None:
+                        try:
+                            resume = _gr.execution_snapshot()
+                            _gr.reset_execution_budget(tok)
+                        except Exception:  # noqa: BLE001
+                            pass
+                if (not enforce and has_timeout and not warned
+                        and time.monotonic() - t0 > h_timeout):
+                    warned = True
+                    emit_harness_block(
+                        "would_block", agent_id, f"harness timeout ({h_timeout}s)",
+                        {"path": "stream", "budget_kind": "timeout",
+                         "timeout_s": h_timeout, "mode": "observe"})
+                yield item
+        finally:
+            try:
+                await inner.aclose()
+            except BaseException:  # noqa: BLE001 — 정리 실패가 원래 결과를 가리지 않게
+                pass
+        if cut is None:
+            return
+        kind, msg = cut
+        if kind == "timeout":
+            emit_harness_block("timeout", agent_id, msg,
+                               {"path": "stream", "timeout_s": h_timeout,
+                                "mode": "enforce"})
+            text = _timeout_response(agent_id, h_timeout).message
+        else:
+            emit_harness_block("budget_exceeded", agent_id, msg,
+                               {"path": "stream", "budget_kind": _budget_kind(msg),
+                                "max_calls": max_calls, "max_tokens": max_tokens,
+                                "mode": "enforce"})
+            text = f"harness budget: agent '{agent_id}' {msg}"
+        # 예외가 아니라 이벤트로 끝낸다 — 스트림 소비자는 type=error 를 이미 다룬다.
+        yield {"type": "error", "data": {"error": text}}
+
+    _wrapped._logos_stream_observed = True  # type: ignore[attr-defined]
     return _wrapped

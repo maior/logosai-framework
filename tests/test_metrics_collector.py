@@ -23,6 +23,11 @@ import sys
 import os
 import time
 
+# live: Postgres(LOGOSAI_TEST_DB_URL, logosus 스키마)가 필요하다 — LOGOSAI_LIVE_TESTS=1 로만 돈다
+if "pytest" in sys.modules:
+    import pytest
+    pytestmark = pytest.mark.live
+
 _logos_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_logos_root, "logos_api"))
 

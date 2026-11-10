@@ -28,6 +28,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import aiohttp
 
+# live: 실행 중인 logos_api(:8090) + ACP(:8888) 가 필요하다 — LOGOSAI_LIVE_TESTS=1 로만 돈다
+if "pytest" in sys.modules:
+    import pytest
+    pytestmark = pytest.mark.live
+
 API_URL = "http://localhost:8090/api/v1/chat/stream"
 APPROVAL_URL = "http://localhost:8090/api/v1/approval"
 

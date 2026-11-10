@@ -205,10 +205,7 @@ def _calc_f1(actual, expected):
     return 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
 
-@pytest.mark.skipif(
-    not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY not set"
-)
+@pytest.mark.live  # 진짜 LLM 을 호출한다 — 키가 있다고 도는 게 아니라 LOGOSAI_LIVE_TESTS=1 일 때만
 class TestLLMDebateIntegration:
     """실제 LLM 호출 통합 테스트"""
 

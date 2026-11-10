@@ -74,6 +74,16 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
                 cls.process = observe_process(proc)
         except Exception:  # noqa: BLE001 — 관측 배선 실패가 클래스 정의를 막지 않음
             pass
+        # 2026-11-10: process_stream 도 하네스로 감싼다. process 만 감싸던 동안
+        # 스트림은 타임아웃·예산 밖이었다(실측: 2초 한도에 4초 스트림 완주).
+        # 신규 경로라 기본은 observe — LOGOSAI_HARNESS_NEW_PATHS 참고.
+        try:
+            stream = cls.__dict__.get("process_stream")
+            if stream is not None:
+                from logosai.observability import observe_stream
+                cls.process_stream = observe_stream(stream)
+        except Exception:  # noqa: BLE001
+            pass
 
     def get_handoff(self, query=None, context=None):
         """멀티스테이지 핸드오프 표준 수신 — HandoffEnvelope 반환.
@@ -1326,6 +1336,15 @@ class LogosAIAgent(ToolUseMixin, MemoryMixin, ReActMixin, PlanningMixin, MultiAg
             Dict[str, Any]: List of agent capabilities
         """
         return {}
+
+# 기본 process_stream 도 감싼다 — __init_subclass__ 는 서브클래스가 **직접 정의한**
+# 것만 보므로, 스트림을 정의하지 않은 에이전트(대다수)는 이 기본 구현을 그대로
+# 물려받는다. 여기서 안 감싸면 그 전부가 하네스 밖에 남는다.
+try:
+    from logosai.observability import observe_stream as _observe_stream
+    LogosAIAgent.process_stream = _observe_stream(LogosAIAgent.process_stream)
+except Exception:  # noqa: BLE001 — 배선 실패가 import 를 막지 않음
+    pass
 
 class AgentTemplate:
     """Agent Template"""
